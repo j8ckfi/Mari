@@ -404,7 +404,7 @@ const SelectContent = forwardRef<HTMLDivElement, SelectContentProps>(
                 className={cn(
                   // min-w tracks the trigger via the Positioner's --anchor-width
                   // var, matching the pre-migration minWidth: triggerRect.width.
-                  `relative flex flex-col gap-0.5 min-w-[var(--anchor-width)] max-h-[min(300px,var(--available-height))] overflow-y-auto ${shape.container} p-1 select-none outline-none`,
+                  `relative flex flex-col min-w-[var(--anchor-width)] max-h-[min(300px,var(--available-height))] overflow-y-auto ${shape.container} p-1 select-none outline-none`,
                   className
                 )}
               >
@@ -555,9 +555,9 @@ const SelectItem = forwardRef<HTMLDivElement, SelectItemProps>(
             data-proximity-index={index}
             data-value={value}
             className={cn(
-              // Fixed height (was py-2 around a 19.5px line box ≈ 35.5px) so
-              // the text-box trim on the item text doesn't shrink the row.
-              `relative z-10 flex h-9 items-center gap-2 ${shape.item} px-2 text-[13px] cursor-pointer outline-none select-none`,
+              // Fixed 28px height (matches the model picker's rows) so the
+              // text-box trim on the item text doesn't shrink the row.
+              `relative z-10 flex h-7 items-center gap-2 ${shape.item} px-2 text-[13px] cursor-pointer outline-none select-none`,
               "transition-[color] duration-80",
               isActive || isChecked
                 ? "text-foreground"

@@ -1,0 +1,94 @@
+{
+  "fill" : "system-light",
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "fill-specializations" : [
+            {
+              "appearance" : "dark",
+              "value" : {
+                "linear-gradient" : [
+                  "display-p3:0.90404,0.87364,0.86950,1.00000",
+                  "display-p3:1.00000,0.97185,0.96802,1.00000"
+                ],
+                "orientation" : {
+                  "start" : {
+                    "x" : 0.4268137810412163,
+                    "y" : 0.7898166019857943
+                  },
+                  "stop" : {
+                    "x" : 0.7295536008800432,
+                    "y" : 0.27464656570475476
+                  }
+                }
+              }
+            },
+            {
+              "appearance" : "tinted",
+              "value" : {
+                "solid" : "display-p3:0.96783,0.94255,0.93395,1.00000"
+              }
+            }
+          ],
+          "image-name" : "icon_23 2.png",
+          "name" : "icon_23 2",
+          "position" : {
+            "scale" : 1.8,
+            "translation-in-points" : [
+              -0.900000000000091,
+              -40.5
+            ]
+          }
+        },
+        {
+          "fill-specializations" : [
+            {
+              "appearance" : "dark",
+              "value" : {
+                "linear-gradient" : [
+                  "display-p3:0.78609,0.81878,0.87391,1.00000",
+                  "display-p3:0.92262,0.95160,0.96783,1.00000"
+                ],
+                "orientation" : {
+                  "start" : {
+                    "x" : 0.6484642734192969,
+                    "y" : 1
+                  },
+                  "stop" : {
+                    "x" : 0.37760307098470486,
+                    "y" : 0.3940032070173458
+                  }
+                }
+              }
+            }
+          ],
+          "hidden" : true,
+          "image-name" : "icon_11.png",
+          "name" : "icon_11",
+          "position" : {
+            "scale" : 1.5,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}
