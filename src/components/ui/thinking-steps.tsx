@@ -80,8 +80,11 @@ const TriggerRow = forwardRef<HTMLButtonElement, TriggerRowProps>(
           )}
           {...(props as React.ButtonHTMLAttributes<HTMLButtonElement>)}
         >
-          {/* Label with dual-layer text (invisible bold layer reserves width) */}
-          <span className="inline-grid text-[13px] text-left">
+          {/* Label with dual-layer text (invisible bold layer reserves width).
+              leading-none so the box hugs its content: an inline-flex label
+              (e.g. the streaming rose+word) then centers with the chevron
+              instead of sitting high in an inherited tall line box. */}
+          <span className="inline-grid text-[13px] leading-none text-left">
             <span
               className="col-start-1 row-start-1 invisible"
               style={{ fontVariationSettings: fontWeights.semibold }}
