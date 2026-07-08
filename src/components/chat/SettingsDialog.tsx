@@ -59,6 +59,15 @@ export function SettingsDialog({
               />
             </Field>
             <Field
+              label="Glass sidebar"
+              desc="Frost the sidebar with native macOS glass. Desktop app only."
+            >
+              <Toggle
+                checked={s.glassSidebar}
+                onChange={(v) => update({ glassSidebar: v })}
+              />
+            </Field>
+            <Field
               stack
               label="Default working directory"
               desc="Where new sessions open. Blank uses your home folder."

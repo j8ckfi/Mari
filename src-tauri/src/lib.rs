@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+mod glass;
 mod pi;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -9,6 +11,13 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
             pi::init(app.handle());
+            #[cfg(target_os = "macos")]
+            {
+                use tauri::Manager;
+                if let Some(window) = app.get_webview_window("main") {
+                    glass::apply_sidebar_glass(&window);
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

@@ -86,6 +86,13 @@ function App() {
     }
   }, [settings.autoCheckUpdates, updater]);
 
+  // Toggle the native sidebar glass: the effect view is always mounted behind
+  // the webview; this attribute turns the sidebar surface transparent so it
+  // shows through. Purely CSS — no native round-trip.
+  useEffect(() => {
+    document.documentElement.dataset.glass = settings.glassSidebar ? "on" : "off";
+  }, [settings.glassSidebar]);
+
   // Global on-disk session list (drives the sidebar; grouped by project).
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const refreshNow = useCallback(() => {

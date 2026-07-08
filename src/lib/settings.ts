@@ -37,6 +37,8 @@ export interface Settings {
   warmPoolSize: number;
   /** Check GitHub Releases for updates on launch. */
   autoCheckUpdates: boolean;
+  /** Frost the sidebar with native macOS glass (desktop app only). */
+  glassSidebar: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -48,6 +50,7 @@ export const DEFAULT_SETTINGS: Settings = {
   extraPathDirs: "",
   warmPoolSize: 5,
   autoCheckUpdates: true,
+  glassSidebar: false,
 };
 
 const STORAGE_KEY = "mari.settings";
