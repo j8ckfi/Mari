@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::OnceLock;
 
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -48,6 +49,68 @@ fn resolve_pi_bin() -> String {
         }
     }
     "pi".to_string()
+}
+
+/// A PATH the spawned Pi can actually run under. `pi` is a `#!/usr/bin/env node`
+/// script, so it needs `node` on PATH — but an app launched from Finder inherits
+/// only a bare PATH (`/usr/bin:/bin:…`), where neither node nor pi live. We build
+/// a real one once: the login shell's PATH (covers Homebrew, nvm/fnm/volta,
+/// `~/.local/bin`, …) plus a static safety net, de-duped. Cached for the process.
+fn augmented_path() -> String {
+    static CACHE: OnceLock<String> = OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            let mut dirs: Vec<String> = Vec::new();
+
+            // Probe the login shell for its PATH. Non-interactive (`-lc`) so it
+            // can't hang on a prompt; markers isolate the value from rc noise.
+            if let Ok(shell) = std::env::var("SHELL") {
+                if let Ok(out) = std::process::Command::new(&shell)
+                    .args(["-lc", "printf '<<MARIPATH>>%s<<END>>' \"$PATH\""])
+                    .output()
+                {
+                    let s = String::from_utf8_lossy(&out.stdout);
+                    if let (Some(a), Some(b)) = (s.find("<<MARIPATH>>"), s.find("<<END>>")) {
+                        if b > a {
+                            let inner = &s[a + "<<MARIPATH>>".len()..b];
+                            for d in inner.split(':').filter(|s| !s.is_empty()) {
+                                dirs.push(d.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Static safety net — the common toolchain locations, in case the
+            // shell probe found nothing (or the user has no login PATH setup).
+            if let Ok(home) = std::env::var("HOME") {
+                for rel in [".local/bin", ".bun/bin", ".volta/bin", ".cargo/bin"] {
+                    dirs.push(format!("{home}/{rel}"));
+                }
+            }
+            for d in [
+                "/opt/homebrew/bin",
+                "/usr/local/bin",
+                "/usr/bin",
+                "/bin",
+                "/usr/sbin",
+                "/sbin",
+            ] {
+                dirs.push(d.to_string());
+            }
+
+            // Finally whatever we already inherited.
+            if let Ok(existing) = std::env::var("PATH") {
+                for d in existing.split(':').filter(|s| !s.is_empty()) {
+                    dirs.push(d.to_string());
+                }
+            }
+
+            let mut seen = std::collections::HashSet::new();
+            dirs.retain(|d| seen.insert(d.clone()));
+            dirs.join(":")
+        })
+        .clone()
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -88,6 +151,9 @@ pub async fn pi_start(
     let bin = resolve_pi_bin();
 
     let mut cmd = Command::new(&bin);
+    // Finder-launched apps inherit a bare PATH; give pi a real one so its
+    // `#!/usr/bin/env node` shebang (and any tools it shells out to) resolve.
+    cmd.env("PATH", augmented_path());
     cmd.arg("--mode").arg("rpc");
     if let Some(model) = opts.model.as_ref().filter(|s| !s.is_empty()) {
         cmd.arg("--model").arg(model);
