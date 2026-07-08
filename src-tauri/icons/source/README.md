@@ -1,38 +1,35 @@
 # Mari app icon — source & regeneration
 
-`MariIcon.icon/` is the Apple **Icon Composer** bundle (macOS 26, Xcode 26):
-layered art + `icon.json` describing fills, shadow, translucency, and the
-light/dark/tinted appearances. Tauri ships one static icon, so we render a
-single appearance and slice it.
+`MariIcon.icon/` is the Apple **Icon Composer** bundle (macOS 26, Xcode 26).
+Tauri ships one static icon, so we use a single exported appearance.
 
-We ship the **dark appearance** (light star on a dark tile — best contrast).
+We ship the **dark appearance** (glossy silver star on a dark tile).
 
-## Why the extra step
+## The source of truth
 
-`xcrun actool` renders the `.icon`, but for a standalone `.icns` it only emits
-the **light** appearance; the dark pixels live inside an adaptive asset in the
-compiled `Assets.car` that can't be cleanly extracted headlessly. So we use
-actool's light render only to measure the exact star geometry, then composite
-the dark variant (`make_dark.py`) with the dark-appearance gradient from
-`icon.json` — matching Icon Composer's size/position, not guessed.
+`MariIcon-Dark-1024.png` is exported straight from **Icon Composer**
+(File → Export → Dark, 1024×1024) — the real beveled/translucent render, not a
+composite. Icon Composer's export is full-bleed (iOS style: tile fills the
+canvas), so for the macOS grid we inset it to ~80% with transparent margins
+(`mari_dark_master_1024.png`) before slicing.
+
+Earlier attempts rendered the `.icon` with `xcrun actool` and hand-composited
+the dark variant — but actool only emits the light appearance for a standalone
+`.icns`, and the composite lost Icon Composer's gloss/emboss. Exporting from
+Icon Composer directly is the correct path; keep doing that.
 
 ## Regenerate
 
 ```sh
-# 1. Render light appearance (geometry reference only).
-xcrun actool MariIcon.icon --compile /tmp/out --app-icon MariIcon \
-  --target-device mac --platform macosx --minimum-deployment-target 26.0 \
-  --output-partial-info-plist /tmp/p.plist
-#    -> /tmp/out/MariIcon.icns ; extract its largest PNG for measuring.
-
-# 2. Composite the dark master (uses the clean icon_11.png + dark gradient).
-python3 make_dark.py            # -> mari_dark_master_1024.png
-
-# 3. Slice the full icon set.
+# From a fresh Icon Composer "Dark" 1024 export named MariIcon-Dark-1024.png:
+python3 - <<'PY'
+from PIL import Image
+src=Image.open("MariIcon-Dark-1024.png").convert("RGBA")
+TILE, S = 824, 1024; off=(S-TILE)//2
+c=Image.new("RGBA",(S,S),(0,0,0,0))
+t=src.resize((TILE,TILE), Image.LANCZOS)
+c.paste(t,(off,off),t)
+c.save("mari_dark_master_1024.png")
+PY
 bunx tauri icon mari_dark_master_1024.png
 ```
-
-If Icon Composer's dark preview ever diverges from `mari_dark_master_1024.png`,
-re-check the star geometry (STAR_W / STAR_CX / STAR_CY in make_dark.py) against
-a fresh actool render, or export the dark appearance from Icon Composer directly
-and feed that PNG to `tauri icon` instead.
