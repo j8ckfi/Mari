@@ -97,7 +97,7 @@ export function ModelPicker({
 
       <Combobox.Portal>
         <Combobox.Positioner
-          side="top"
+          side="bottom"
           align="start"
           sideOffset={8}
           className="z-50 outline-none"
