@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath, URL } from "node:url";
+import pkg from "./package.json" with { type: "json" };
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
@@ -10,12 +11,17 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
 
+  // Surface the app version to the UI (Settings → About).
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
+
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
-    // border-beam / metal-fx pull their own React instance otherwise → the
-    // dreaded "Invalid hook call" from two copies of React.
+    // Dedupe React so any package that bundles its own copy doesn't trigger the
+    // "Invalid hook call" from two React instances.
     dedupe: ["react", "react-dom"],
   },
 

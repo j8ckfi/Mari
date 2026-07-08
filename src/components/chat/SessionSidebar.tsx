@@ -13,12 +13,14 @@ import {
   IconCheck,
   IconX,
   IconChevronRight,
+  IconSettings,
 } from "@tabler/icons-react";
 import { ContextMenu } from "@base-ui/react/context-menu";
 import {
   Sidebar,
   SidebarContent,
   SidebarHeader,
+  SidebarFooter,
   SidebarMenu,
   SidebarMenuAction,
   SidebarMenuButton,
@@ -90,6 +92,8 @@ export interface SessionSidebarProps {
   onDelete: (path: string) => void;
   /** Drag-to-resize: report the new sidebar width (px) during a drag. */
   onResize: (width: number) => void;
+  /** Open the settings panel. */
+  onOpenSettings: () => void;
 }
 
 export function SessionSidebar({
@@ -102,6 +106,7 @@ export function SessionSidebar({
   onRename,
   onDelete,
   onResize,
+  onOpenSettings,
 }: SessionSidebarProps) {
   const projects = useMemo<Project[]>(() => {
     const map = new Map<string, SessionSummary[]>();
@@ -239,6 +244,22 @@ export function SessionSidebar({
           ))
         )}
       </SidebarContent>
+
+      <SidebarFooter className="px-1 pb-2">
+        <button
+          onClick={onOpenSettings}
+          className={cn(
+            "flex items-center gap-2 rounded-md px-2 py-1.5 text-[13px]",
+            "text-sidebar-foreground/70",
+            "transition-colors duration-100 ease-[cubic-bezier(0.23,1,0.32,1)]",
+            "hover:bg-sidebar-accent hover:text-sidebar-foreground",
+          )}
+        >
+          <IconSettings size={16} className="shrink-0" />
+          Settings
+        </button>
+      </SidebarFooter>
+
       <SidebarResizer onResize={onResize} />
     </Sidebar>
   );

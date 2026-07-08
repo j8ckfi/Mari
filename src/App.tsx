@@ -21,6 +21,8 @@ import {
 import { Conversation } from "@/components/chat/Conversation";
 import { ComposerControls } from "@/components/chat/ComposerControls";
 import { SessionSidebar } from "@/components/chat/SessionSidebar";
+import { SettingsDialog } from "@/components/chat/SettingsDialog";
+import { useSettings } from "@/lib/settings";
 import { usePiSession, type PiSession } from "@/hooks/usePiSession";
 import { useChatScroll } from "@/hooks/useChatScroll";
 import {
@@ -65,10 +67,13 @@ const nextKey = () =>
     : `s${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
 // Warm pool: keep the active tab, every running (streaming) tab, and the last
-// few recently-viewed idle tabs alive; reap the rest (unmount → kill process).
-const WARM_IDLE = 5;
+// `settings.warmPoolSize` recently-viewed idle tabs alive; reap the rest
+// (unmount → kill process).
 
 function App() {
+  const settings = useSettings();
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
   // Global on-disk session list (drives the sidebar; grouped by project).
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const refreshNow = useCallback(() => {
@@ -182,8 +187,10 @@ function App() {
     statuses[activeKey]?.cwd;
 
   const newSession = useCallback(
-    () => newTab(statusesRef.current[activeKey]?.cwd),
-    [newTab, activeKey],
+    // Stay in the active session's project; otherwise fall to the configured
+    // default working directory (and finally the engine's home fallback).
+    () => newTab(statusesRef.current[activeKey]?.cwd ?? settings.defaultCwd ?? undefined),
+    [newTab, activeKey, settings.defaultCwd],
   );
   const newSessionIn = useCallback((cwd: string) => newTab(cwd), [newTab]);
 
@@ -243,11 +250,11 @@ function App() {
       const rest = prev
         .filter((t) => !keep.has(t.key))
         .sort((a, b) => b.lastViewed - a.lastViewed);
-      for (const t of rest.slice(0, WARM_IDLE)) keep.add(t.key);
+      for (const t of rest.slice(0, settings.warmPoolSize)) keep.add(t.key);
       const next = prev.filter((t) => keep.has(t.key));
       return next.length === prev.length ? prev : next;
     });
-  }, [activeKey, statuses]);
+  }, [activeKey, statuses, settings.warmPoolSize]);
 
   // Drop stale status/action entries for reaped tabs.
   useEffect(() => {
@@ -337,6 +344,7 @@ function App() {
           onRename={renameSessionByPath}
           onDelete={deleteSessionByPath}
           onResize={handleResize}
+          onOpenSettings={() => setSettingsOpen(true)}
         />
         <SidebarInset className="flex h-screen min-w-0 flex-col bg-background text-foreground">
           {tabs.map((t) => (
@@ -355,6 +363,7 @@ function App() {
             </EngineBoundary>
           ))}
         </SidebarInset>
+        <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
       </SidebarProvider>
     </IconProvider>
   );

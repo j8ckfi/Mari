@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { createPiTransport, type ConnState } from "@/lib/pi/client";
 import { initialState, reduce } from "@/lib/pi/reducer";
+import { useSettings, parsePathDirs } from "@/lib/settings";
 import type {
   AgentMessage,
   ImageContent,
@@ -83,6 +84,24 @@ export function usePiSession(spec: PiSessionSpec) {
   // Keep the latest onActivity without re-subscribing the event stream.
   const onActivityRef = useRef(onActivity);
   onActivityRef.current = onActivity;
+
+  // Settings feed session defaults (model/thinking) and the pi runtime override.
+  // Read through a ref so a settings change never restarts a live session — the
+  // values are captured at start/restart time, applying only to future spawns.
+  const settings = useSettings();
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const buildStartOptions = useCallback(() => {
+    const s = settingsRef.current;
+    return {
+      model: s.defaultModel || DEFAULT_MODEL,
+      cwd,
+      session: sessionPath,
+      name,
+      piBin: s.piBinPath || undefined,
+      pathDirs: parsePathDirs(s.extraPathDirs),
+    };
+  }, [cwd, sessionPath, name]);
 
   const refreshStats = useCallback(() => {
     void transport.send({ type: "get_session_stats" });
@@ -182,13 +201,20 @@ export function usePiSession(spec: PiSessionSpec) {
       if (s === "connected") {
         void transport.send({ type: "get_state" });
         void transport.send({ type: "get_available_models" });
-        // An existing session boots with --session; pull its transcript.
-        if (sessionPath) void transport.send({ type: "get_messages" });
+        if (sessionPath) {
+          // An existing session boots with --session; pull its transcript and
+          // keep its own saved thinking level.
+          void transport.send({ type: "get_messages" });
+        } else {
+          // Fresh session: apply the configured default thinking level, if any.
+          const dt = settingsRef.current.defaultThinking;
+          if (dt) void transport.send({ type: "set_thinking_level", level: dt });
+        }
         refreshStats();
       }
     });
     void transport
-      .start({ model: DEFAULT_MODEL, cwd, session: sessionPath, name })
+      .start(buildStartOptions())
       .catch(() => setConnection("disconnected"));
     return () => {
       offEvent();
@@ -276,9 +302,9 @@ export function usePiSession(spec: PiSessionSpec) {
   const restart = useCallback(async () => {
     setConnection("connecting");
     await transport
-      .start({ model: DEFAULT_MODEL, cwd, session: sessionPath, name })
+      .start(buildStartOptions())
       .catch(() => setConnection("disconnected"));
-  }, [transport, cwd, sessionPath, name]);
+  }, [transport, buildStartOptions]);
 
   return {
     procKey,

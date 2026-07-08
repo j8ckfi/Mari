@@ -36,7 +36,10 @@ pub struct PiState {
 
 /// Resolve the `pi` binary. GUI apps launched from Finder don't inherit the
 /// user's shell PATH, so prefer explicit locations before falling back to PATH.
-fn resolve_pi_bin() -> String {
+fn resolve_pi_bin(override_path: Option<&str>) -> String {
+    if let Some(p) = override_path.filter(|s| !s.is_empty()) {
+        return p.to_string();
+    }
     if let Ok(explicit) = std::env::var("MARI_PI_BIN") {
         if !explicit.is_empty() {
             return explicit;
@@ -113,6 +116,22 @@ fn augmented_path() -> String {
         .clone()
 }
 
+/// The augmented PATH with the user's extra Settings dirs prepended (highest
+/// priority), de-duped against the cached base.
+fn path_with_extra(extra: &[String]) -> String {
+    if extra.is_empty() {
+        return augmented_path();
+    }
+    let base = augmented_path();
+    let mut dirs: Vec<String> = extra.iter().filter(|s| !s.is_empty()).cloned().collect();
+    for d in base.split(':') {
+        dirs.push(d.to_string());
+    }
+    let mut seen = std::collections::HashSet::new();
+    dirs.retain(|d| seen.insert(d.clone()));
+    dirs.join(":")
+}
+
 #[derive(serde::Deserialize, Default)]
 pub struct StartOptions {
     /// Working directory for the agent (defaults to the user's home).
@@ -125,6 +144,13 @@ pub struct StartOptions {
     /// loads that transcript so an already-saved session re-attaches to a live
     /// process; omit it to start a fresh session.
     pub session: Option<String>,
+    /// Explicit path to the `pi` binary (Settings override); auto-resolved when
+    /// empty/absent.
+    #[serde(rename = "piBin")]
+    pub pi_bin: Option<String>,
+    /// Extra directories prepended to the child's PATH (Settings override).
+    #[serde(rename = "pathDirs")]
+    pub path_dirs: Option<Vec<String>>,
 }
 
 /// Every stdout line is emitted as `pi://event` wrapped in a `{key, line}`
@@ -148,12 +174,16 @@ pub async fn pi_start(
     stop_one(&state, &key).await;
 
     let opts = options.unwrap_or_default();
-    let bin = resolve_pi_bin();
+    let bin = resolve_pi_bin(opts.pi_bin.as_deref());
 
     let mut cmd = Command::new(&bin);
     // Finder-launched apps inherit a bare PATH; give pi a real one so its
     // `#!/usr/bin/env node` shebang (and any tools it shells out to) resolve.
-    cmd.env("PATH", augmented_path());
+    // Any extra dirs from Settings take priority.
+    cmd.env(
+        "PATH",
+        path_with_extra(opts.path_dirs.as_deref().unwrap_or(&[])),
+    );
     cmd.arg("--mode").arg("rpc");
     if let Some(model) = opts.model.as_ref().filter(|s| !s.is_empty()) {
         cmd.arg("--model").arg(model);

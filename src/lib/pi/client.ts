@@ -20,6 +20,10 @@ export interface StartOptions {
   name?: string;
   /** Existing session file/id to boot into (`--session`); omit for a fresh one. */
   session?: string;
+  /** Explicit path to the `pi` binary (Tauri only; overrides auto-resolution). */
+  piBin?: string;
+  /** Extra dirs prepended to the spawned pi's PATH (Tauri only). */
+  pathDirs?: string[];
 }
 
 export type ConnState = "connecting" | "connected" | "disconnected";
