@@ -75,6 +75,17 @@ function App() {
   const settings = useSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
+  // Check GitHub Releases for a newer version once, when the app opens (gated
+  // by the auto-check setting). Surfaced as a button above Settings.
+  const updater = useUpdater();
+  const updateCheckedRef = useRef(false);
+  useEffect(() => {
+    if (settings.autoCheckUpdates && !updateCheckedRef.current) {
+      updateCheckedRef.current = true;
+      void updater.check();
+    }
+  }, [settings.autoCheckUpdates, updater]);
+
   // Global on-disk session list (drives the sidebar; grouped by project).
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const refreshNow = useCallback(() => {
@@ -346,9 +357,9 @@ function App() {
           onDelete={deleteSessionByPath}
           onResize={handleResize}
           onOpenSettings={() => setSettingsOpen(true)}
+          updater={updater}
         />
         <SidebarInset className="flex h-screen min-w-0 flex-col bg-background text-foreground">
-          <UpdateBanner autoCheck={settings.autoCheckUpdates} />
           {tabs.map((t) => (
             <EngineBoundary key={t.key} active={t.key === activeKey}>
               <SessionEngine
@@ -723,49 +734,5 @@ function JumpToLatest({
     </button>
   );
 }
-
-// Slim top bar shown only when a launch-time update check finds a newer version
-// (gated by the auto-check setting). Manual checks live in Settings → About.
-function UpdateBanner({ autoCheck }: { autoCheck: boolean }) {
-  const u = useUpdater();
-  const [dismissed, setDismissed] = useState(false);
-  const checkedRef = useRef(false);
-  useEffect(() => {
-    if (autoCheck && !checkedRef.current) {
-      checkedRef.current = true;
-      void u.check();
-    }
-  }, [autoCheck, u]);
-
-  if (dismissed || (u.phase !== "available" && u.phase !== "downloading"))
-    return null;
-
-  return (
-    <div className="flex h-8 shrink-0 items-center justify-center gap-3 border-b border-border bg-accent/10 px-4 text-[12px] text-foreground">
-      {u.phase === "downloading" ? (
-        <span className="text-muted-foreground">Downloading v{u.version}…</span>
-      ) : (
-        <>
-          <span>
-            Mari <span className="tabular-nums">v{u.version}</span> is available.
-          </span>
-          <button
-            onClick={u.install}
-            className="rounded-[5px] px-2 py-0.5 font-medium text-accent-foreground hover:bg-hover"
-          >
-            Install &amp; relaunch
-          </button>
-          <button
-            onClick={() => setDismissed(true)}
-            className="text-muted-foreground hover:text-foreground"
-          >
-            Later
-          </button>
-        </>
-      )}
-    </div>
-  );
-}
-
 
 export default App;

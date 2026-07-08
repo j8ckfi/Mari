@@ -14,6 +14,8 @@ import {
   IconX,
   IconChevronRight,
   IconSettings,
+  IconDownload,
+  IconLoader2,
 } from "@tabler/icons-react";
 import { ContextMenu } from "@base-ui/react/context-menu";
 import {
@@ -28,6 +30,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import type { SessionSummary } from "@/lib/pi/sessions";
+import type { Updater } from "@/lib/updater";
 import { cn } from "@/lib/utils";
 
 interface Project {
@@ -94,6 +97,8 @@ export interface SessionSidebarProps {
   onResize: (width: number) => void;
   /** Open the settings panel. */
   onOpenSettings: () => void;
+  /** Auto-update state + actions; drives the update button above Settings. */
+  updater: Updater;
 }
 
 export function SessionSidebar({
@@ -107,6 +112,7 @@ export function SessionSidebar({
   onDelete,
   onResize,
   onOpenSettings,
+  updater,
 }: SessionSidebarProps) {
   const projects = useMemo<Project[]>(() => {
     const map = new Map<string, SessionSummary[]>();
@@ -245,7 +251,8 @@ export function SessionSidebar({
         )}
       </SidebarContent>
 
-      <SidebarFooter className="px-1 pb-2">
+      <SidebarFooter className="gap-0.5 px-1 pb-2">
+        <UpdateButton updater={updater} />
         <button
           onClick={onOpenSettings}
           className={cn(
@@ -262,6 +269,64 @@ export function SessionSidebar({
 
       <SidebarResizer onResize={onResize} />
     </Sidebar>
+  );
+}
+
+// Update affordance pinned above Settings. Squared button matching the app's
+// chrome, with two actionable states:
+//   available  → "Download update"        (click: download + install in place)
+//   downloaded → "Restart app to update"  (click: relaunch into the new build)
+// While downloading it shows a spinner + percentage; hidden in every other
+// phase (idle / checking / up-to-date / error / non-desktop).
+function UpdateButton({ updater }: { updater: Updater }) {
+  const { phase, progress } = updater;
+  if (phase !== "available" && phase !== "downloading" && phase !== "downloaded")
+    return null;
+
+  const box = cn(
+    "flex w-full items-center gap-2 rounded-md border border-sidebar-border px-2 py-1.5 text-[13px]",
+    "transition-colors duration-100 ease-[cubic-bezier(0.23,1,0.32,1)]",
+  );
+
+  if (phase === "downloading") {
+    const pct = progress != null ? Math.round(progress * 100) : null;
+    return (
+      <div className={cn(box, "text-sidebar-foreground/70")} aria-live="polite">
+        <IconLoader2 size={16} className="shrink-0 animate-spin" />
+        <span className="tabular-nums">
+          {pct != null ? `Downloading ${pct}%` : "Downloading…"}
+        </span>
+      </div>
+    );
+  }
+
+  if (phase === "downloaded") {
+    return (
+      <button
+        onClick={() => void updater.restart()}
+        className={cn(
+          box,
+          "font-medium text-sidebar-foreground hover:bg-sidebar-accent",
+        )}
+      >
+        <IconCheck size={16} className="shrink-0" />
+        Restart app to update
+      </button>
+    );
+  }
+
+  // available
+  return (
+    <button
+      onClick={() => void updater.download()}
+      className={cn(
+        box,
+        "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-foreground",
+      )}
+    >
+      <IconDownload size={16} className="shrink-0" />
+      Download update
+    </button>
   );
 }
 

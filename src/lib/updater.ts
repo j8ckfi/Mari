@@ -13,20 +13,25 @@ export type UpdatePhase =
   | "uptodate"
   | "available"
   | "downloading"
+  | "downloaded" // downloaded + installed, awaiting a relaunch
   | "error"
   | "unsupported"; // not the desktop app
 
 export interface UpdaterState {
   phase: UpdatePhase;
   version?: string; // the newer version, when available
+  /** Download progress in [0, 1] while phase === "downloading". */
+  progress?: number;
   error?: string;
 }
 
 export interface Updater extends UpdaterState {
   /** Check GitHub Releases for a newer version. */
   check: () => Promise<void>;
-  /** Download + install the pending update, then relaunch. */
-  install: () => Promise<void>;
+  /** Download + install the pending update (does not relaunch). */
+  download: () => Promise<void>;
+  /** Relaunch into the freshly-installed version. */
+  restart: () => Promise<void>;
 }
 
 export function useUpdater(): Updater {
@@ -60,18 +65,38 @@ export function useUpdater(): Updater {
     }
   }, [set]);
 
-  const install = useCallback(async () => {
+  const download = useCallback(async () => {
     const update = pending.current;
     if (!update) return;
-    set({ phase: "downloading", version: update.version });
+    set({ phase: "downloading", version: update.version, progress: 0 });
     try {
-      await update.downloadAndInstall();
-      const { relaunch } = await import("@tauri-apps/plugin-process");
-      await relaunch();
+      let total = 0;
+      let received = 0;
+      await update.downloadAndInstall((event) => {
+        switch (event.event) {
+          case "Started":
+            total = event.data.contentLength ?? 0;
+            break;
+          case "Progress":
+            received += event.data.chunkLength;
+            set({
+              phase: "downloading",
+              version: update.version,
+              progress: total > 0 ? Math.min(received / total, 1) : undefined,
+            });
+            break;
+        }
+      });
+      set({ phase: "downloaded", version: update.version });
     } catch (e) {
       set({ phase: "error", error: String(e) });
     }
   }, [set]);
 
-  return { ...state, check, install };
+  const restart = useCallback(async () => {
+    const { relaunch } = await import("@tauri-apps/plugin-process");
+    await relaunch();
+  }, []);
+
+  return { ...state, check, download, restart };
 }

@@ -224,13 +224,28 @@ function UpdatesControl() {
   }
   if (u.phase === "available") {
     return (
-      <button className={cn(btn, "text-foreground")} onClick={u.install}>
+      <button
+        className={cn(btn, "text-foreground")}
+        onClick={() => void u.download().then(u.restart)}
+      >
         Update to v{u.version} → install &amp; relaunch
       </button>
     );
   }
   if (u.phase === "downloading") {
-    return <span className="text-[12px] text-muted-foreground">Downloading v{u.version}…</span>;
+    return (
+      <span className="text-[12px] text-muted-foreground">
+        Downloading v{u.version}
+        {u.progress != null ? ` ${Math.round(u.progress * 100)}%` : "…"}
+      </span>
+    );
+  }
+  if (u.phase === "downloaded") {
+    return (
+      <button className={cn(btn, "text-foreground")} onClick={u.restart}>
+        Restart app to update
+      </button>
+    );
   }
   return (
     <div className="flex items-center gap-2">
