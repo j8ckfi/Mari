@@ -31,19 +31,23 @@ interface ShapeClasses {
 }
 
 const shapeMap: Record<ShapeVariant, ShapeClasses> = {
+  // Despite the name, the app runs on this variant everywhere (no
+  // ShapeProvider is mounted, so useShape falls back here). Tuned "properly
+  // square": tight radii on every surface. Genuinely circular controls (send
+  // button, model/thinking pills, dots) use rounded-full directly and are
+  // unaffected.
   pill: {
-    item: "rounded-[20px]",
-    bg: "rounded-[20px]",
+    item: "rounded-[5px]",
+    bg: "rounded-[5px]",
     // +2px over `item` because the focus ring sits 2px outside the element
-    // (top/left -2, width/height +4); this keeps the corners concentric so a
-    // pill element gets a pill ring (matches the rounded-mode 8px→10px bump).
-    focusRing: "rounded-[22px]",
-    mergedBg: "rounded-2xl",
-    container: "rounded-3xl",
-    button: "rounded-[20px]",
-    input: "rounded-[20px]",
-    bgRadius: 20,
-    mergedRadius: 16,
+    // (top/left -2, width/height +4); this keeps the corners concentric.
+    focusRing: "rounded-[7px]",
+    mergedBg: "rounded-[5px]",
+    container: "rounded-[8px]",
+    button: "rounded-[5px]",
+    input: "rounded-[5px]",
+    bgRadius: 5,
+    mergedRadius: 5,
   },
   rounded: {
     item: "rounded-lg",

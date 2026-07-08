@@ -7,7 +7,9 @@
    the Border Beam (see lib/pi/modelColor). Everything else stays restrained.
    ────────────────────────────────────────────────────────────────────────── */
 :root {
-  --radius: 0.75rem;
+  /* Properly square. Cascades to rounded-sm/md/lg/xl via @theme below
+     (sm 2px · md 4px · lg 6px · xl 10px). */
+  --radius: 0.375rem;
 
   --background: #fdfdfc;
   --foreground: oklch(0.18 0.005 285);
@@ -355,14 +357,14 @@
   font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
   font-size: 0.86em;
   padding: 0.12em 0.36em;
-  border-radius: 5px;
+  border-radius: 4px;
   background: color-mix(in oklab, var(--foreground) 9%, transparent);
 }
 /* Code blocks */
 .mari-md pre {
   margin: 0.8em 0;
   padding: 0.85em 1em;
-  border-radius: 12px;
+  border-radius: 8px;
   background: oklch(0.14 0.004 285);
   border: 1px solid var(--border);
   overflow-x: auto;
