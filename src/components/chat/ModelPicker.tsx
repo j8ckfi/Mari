@@ -97,13 +97,12 @@ export function ModelPicker({
 
       <Combobox.Portal>
         <Combobox.Positioner
-          side="bottom"
+          side="top"
           align="start"
           sideOffset={8}
-          // Pin it below the pill. Without this Base UI flips the popup up when
-          // its full height won't fit under the trigger; instead we keep it
-          // downward and let it shrink to `--available-height` (scrolling
-          // inside) so it always opens down.
+          // Pin it above the pill (composer sits low, so there's room up top).
+          // side:none stops Base UI flipping it back down; it shrinks to
+          // `--available-height` and scrolls internally instead.
           collisionAvoidance={{ side: "none", fallbackAxisSide: "none" }}
           className="z-50 outline-none"
         >
