@@ -1,14 +1,14 @@
 // The little pills on the left of the chat bar: model picker + thinking effort.
-// Rendered inside InputMessage's leftSlot. Both use Fluid's Select (Base UI).
+// The model pill is a searchable combobox (200+ models); the thinking pill is a
+// plain Select over the handful of levels the model accepts.
 
-import { Fragment, useMemo } from "react";
 import {
   Select,
   SelectTrigger,
   SelectContent,
   SelectItem,
-  SelectLabel,
 } from "@/components/ui/select";
+import { ModelPicker } from "@/components/chat/ModelPicker";
 import { ContextRing } from "@/components/chat/ContextRing";
 import { cn } from "@/lib/utils";
 import type { Model, SessionStats, ThinkingLevel } from "@/lib/pi/types";
@@ -38,33 +38,6 @@ export function ComposerControls({
   onSelectModel: (provider: string, modelId: string) => void;
   onSelectThinking: (level: ThinkingLevel) => void;
 }) {
-  // Flatten into a globally-indexed list (Select registers items by index),
-  // marking each provider's first entry so we can insert a group label.
-  const modelItems = useMemo(() => {
-    const map = new Map<string, Model[]>();
-    for (const m of availableModels) {
-      const arr = map.get(m.provider) ?? [];
-      arr.push(m);
-      map.set(m.provider, arr);
-    }
-    const out: {
-      provider: string;
-      model: Model;
-      index: number;
-      firstOfProvider: boolean;
-    }[] = [];
-    let index = 0;
-    for (const [provider, models] of map) {
-      models.forEach((model, j) => {
-        out.push({ provider, model, index, firstOfProvider: j === 0 });
-        index += 1;
-      });
-    }
-    return out;
-  }, [availableModels]);
-
-  const modelValue = model ? `${model.provider}/${model.id}` : undefined;
-
   // Read the levels this specific model accepts, in strength order. The picker
   // only appears when there's a genuine choice — non-reasoning models (and any
   // model with a single forced level) show nothing.
@@ -76,34 +49,13 @@ export function ComposerControls({
       {/* Context-window ring — sits just left of the model it measures. */}
       <ContextRing stats={stats} model={model} />
 
-      {/* Model pill */}
-      <Select
-        value={modelValue}
-        onValueChange={(v) => {
-          const i = v.indexOf("/");
-          if (i > 0) onSelectModel(v.slice(0, i), v.slice(i + 1));
-        }}
-      >
-        <SelectTrigger
-          variant="borderless"
-          placeholder="Model"
-          className={PILL}
-        />
-        <SelectContent className="max-h-[60vh] min-w-[240px]">
-          {modelItems.map(({ provider, model: m, index, firstOfProvider }) => (
-            <Fragment key={`${provider}/${m.id}`}>
-              {firstOfProvider && (
-                <SelectLabel className="text-[11px] uppercase tracking-wide">
-                  {provider}
-                </SelectLabel>
-              )}
-              <SelectItem value={`${provider}/${m.id}`} index={index}>
-                {m.name || m.id}
-              </SelectItem>
-            </Fragment>
-          ))}
-        </SelectContent>
-      </Select>
+      {/* Model pill — searchable combobox. */}
+      <ModelPicker
+        model={model}
+        availableModels={availableModels}
+        onSelectModel={onSelectModel}
+        triggerClassName={cn("group", PILL)}
+      />
 
       {/* Thinking pill — only when the model offers a real choice of levels,
           and only the levels it actually accepts (read from the model, never
