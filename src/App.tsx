@@ -12,7 +12,6 @@ import { IconArrowDown, IconEdit } from "@tabler/icons-react";
 import { IconProvider } from "@/lib/icon-context";
 import { ProjectBreadcrumb } from "@/components/chat/ProjectBreadcrumb";
 import { InputMessage } from "@/components/ui/input-message";
-import { MariBeam } from "@/components/ui/MariBeam";
 import {
   SidebarInset,
   SidebarProvider,
@@ -522,44 +521,38 @@ function ChatSurface({
   );
 
   const composer = (
-    <MariBeam model={pi.model} active={pi.streaming}>
-      <InputMessage
-        className="border border-border shadow-lg dark:border-transparent dark:shadow-surface-2"
-        value={draft}
-        onValueChange={setDraft}
-        files={files}
-        onFilesChange={setFiles}
-        status={pi.streaming ? "streaming" : "idle"}
-        onStop={pi.abort}
-        placeholder={isHome ? "Do anything" : "Message Pi…"}
-        leftSlot={
-          <ComposerControls
-            model={pi.model}
-            availableModels={pi.availableModels}
-            thinkingLevel={pi.thinkingLevel}
-            stats={pi.stats}
-            onSelectModel={pi.setModelById}
-            onSelectThinking={pi.setThinking}
-          />
-        }
-        onSend={(text, sentFiles) => {
-          void pi.sendPrompt(text, sentFiles);
-          setDraft("");
-          setFiles([]);
-          scroll.onUserSend();
-        }}
-      />
-    </MariBeam>
+    <InputMessage
+      className="border border-border shadow-lg dark:border-transparent dark:shadow-surface-2"
+      value={draft}
+      onValueChange={setDraft}
+      files={files}
+      onFilesChange={setFiles}
+      status={pi.streaming ? "streaming" : "idle"}
+      onStop={pi.abort}
+      placeholder={isHome ? "Do anything" : "Message Pi…"}
+      leftSlot={
+        <ComposerControls
+          model={pi.model}
+          availableModels={pi.availableModels}
+          thinkingLevel={pi.thinkingLevel}
+          stats={pi.stats}
+          onSelectModel={pi.setModelById}
+          onSelectThinking={pi.setThinking}
+        />
+      }
+      onSend={(text, sentFiles) => {
+        void pi.sendPrompt(text, sentFiles);
+        setDraft("");
+        setFiles([]);
+        scroll.onUserSend();
+      }}
+    />
   );
 
   return (
     <>
-      {/* Top row, inline with the traffic lights: breadcrumb (display-only) +
-          status. */}
-      <ContentHeader
-        breadcrumb={!isHome ? headerBreadcrumb : null}
-        connection={pi.connection}
-      />
+      {/* Top row, inline with the traffic lights: breadcrumb (display-only). */}
+      <ContentHeader breadcrumb={!isHome ? headerBreadcrumb : null} />
 
       {isHome ? (
         // Cursor-style home: breadcrumb directly above the centered chat box.
@@ -671,15 +664,9 @@ function TitleBar({ onNewChat }: { onNewChat: () => void }) {
 }
 
 // The content pane's top row — inline with the traffic lights (h-8). Holds the
-// breadcrumb (project ▸ thread) and the connection dot. When the sidebar is
-// closed the fixed toggle cluster overlays this pane's top-left, so pad past it.
-function ContentHeader({
-  breadcrumb,
-  connection,
-}: {
-  breadcrumb: ReactNode;
-  connection: string;
-}) {
+// breadcrumb (project ▸ thread). When the sidebar is closed the fixed toggle
+// cluster overlays this pane's top-left, so pad past it.
+function ContentHeader({ breadcrumb }: { breadcrumb: ReactNode }) {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
   const pl = collapsed ? trafficInset() + 66 : 20;
@@ -691,7 +678,6 @@ function ContentHeader({
       style={{ paddingLeft: pl }}
     >
       <div className="min-w-0 flex-1">{breadcrumb}</div>
-      <ConnectionDot status={connection} />
     </header>
   );
 }
@@ -727,14 +713,5 @@ function JumpToLatest({
   );
 }
 
-function ConnectionDot({ status }: { status: string }) {
-  const color =
-    status === "connected"
-      ? "bg-emerald-400"
-      : status === "connecting"
-        ? "bg-amber-400"
-        : "bg-destructive";
-  return <span className={`h-2 w-2 rounded-full ${color}`} />;
-}
 
 export default App;

@@ -3,8 +3,8 @@
 @custom-variant dark (&:is(.dark *));
 
 /* ── Design tokens ─────────────────────────────────────────────────────────
-   Calm neutral surface. The only color that shifts with the active model is
-   the Border Beam (see lib/pi/modelColor). Everything else stays restrained.
+   Calm neutral surface — a blank slate. Nothing shifts with the active model;
+   everything stays restrained.
    ────────────────────────────────────────────────────────────────────────── */
 :root {
   /* Properly square. Cascades to rounded-sm/md/lg/xl via @theme below

@@ -3,8 +3,8 @@
 //   • active   (has content)                 → solid foreground circle + arrow
 //   • stop     (agent working, empty draft)  → solid circle with a stop square
 //
-// The agent-working *beam* lives on the composer box itself (MariBeam). No
-// liquid-metal shader — a plain, calm control that matches the rest of the app.
+// No liquid-metal shader, no beam — a plain, calm control that matches the
+// blank-slate feel of the rest of the app.
 
 import { useIcon } from "@/lib/icon-context";
 import { cn } from "@/lib/utils";
