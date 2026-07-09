@@ -12,6 +12,24 @@
 
 import type { AgentAdapter } from "@/lib/agent/types";
 import { piAdapter } from "@/lib/adapters/pi";
+import { mockAdapter } from "@/lib/adapters/mock";
 
-/** The active backend. */
-export const agent: AgentAdapter = piAdapter;
+/** Adapters selectable at runtime (dev/tests): `VITE_AGENT=mock bun run dev`. */
+const REGISTRY: Record<string, AgentAdapter> = {
+  pi: piAdapter,
+  mock: mockAdapter,
+};
+
+// Runtime selection, for dev and tests only — forks should change the default
+// below instead. Priority: `?agent=mock` URL param → VITE_AGENT env → default.
+const fromUrl =
+  typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("agent")
+    : null;
+const fromEnv = (import.meta as { env?: Record<string, string> }).env
+  ?.VITE_AGENT;
+const requested = fromUrl ?? fromEnv;
+
+/** The active backend. Forks: replace `piAdapter` with your adapter. */
+export const agent: AgentAdapter =
+  (requested && REGISTRY[requested]) || piAdapter;
