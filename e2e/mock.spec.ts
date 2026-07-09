@@ -65,6 +65,19 @@ test("question flow: select card renders and resolves on answer", async ({
   await expect(page.getByText("You said: please ask me something")).toBeVisible();
 });
 
+test("interleaved turn: time/copy meta only on the final output", async ({
+  page,
+}) => {
+  await send(page, "interleave");
+  await expect(
+    page.getByText("This reply came from the mock adapter", { exact: false }),
+  ).toBeVisible();
+  // Three prose segments render (two narrations + answer), but only the final
+  // one — plus the user message — carries a Copy control.
+  await expect(page.getByText("I'll search the docs for that first.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Copy message" })).toHaveCount(2);
+});
+
 test("second turn appends below the first", async ({ page }) => {
   await send(page, "turn one");
   await expect(page.getByText("You said: turn one")).toBeVisible();

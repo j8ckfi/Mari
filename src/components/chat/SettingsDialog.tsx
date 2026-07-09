@@ -39,7 +39,9 @@ export function SettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="lg" className="max-h-[85vh] overflow-y-auto">
+      {/* scroll-fade dissolves clipped content toward the scrollable edge so
+          the cut-off reads as "more below" instead of an abrupt crop. */}
+      <DialogContent size="lg" className="scroll-fade max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
         </DialogHeader>

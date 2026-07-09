@@ -384,9 +384,20 @@
   border-radius: 4px;
   background: color-mix(in oklab, var(--foreground) 9%, transparent);
 }
-/* Code blocks */
-.mari-md pre {
+/* Code blocks — the wrapper (.mari-pre) carries the block margin so the copy
+   button can anchor to the pre without affecting flow; the pre itself is
+   flush inside it. */
+.mari-md .mari-pre {
   margin: 0.8em 0;
+}
+.mari-md .mari-pre:first-child {
+  margin-top: 0;
+}
+.mari-md .mari-pre:last-child {
+  margin-bottom: 0;
+}
+.mari-md pre {
+  margin: 0;
   padding: 0.85em 1em;
   border-radius: 8px;
   background: oklch(0.14 0.004 285);

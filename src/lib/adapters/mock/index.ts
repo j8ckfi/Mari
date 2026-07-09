@@ -85,6 +85,55 @@ function script(prompt: string): Array<[number, AgentEvent[]]> {
     [150, [{ kind: "text", text: answer, final: true }]],
     [50, [{ kind: "run-end" }]],
   ];
+  // Saying "interleave" demos a long agentic turn: narration → tool → narration
+  // → tool → answer, i.e. multiple prose segments split by work chunks.
+  if (/\binterleave\b/i.test(prompt)) {
+    const n1 = "I'll search the docs for that first.";
+    const n2 =
+      "The search needs auth which isn't set up — let me check the local config instead.";
+    return [
+      [0, [{ kind: "run-start" }]],
+      [150, [{ kind: "text", text: n1, final: true }]],
+      [
+        100,
+        [
+          {
+            kind: "step-start",
+            id: "mock-tool-a",
+            icon: "monitor",
+            label: "Searched docs",
+          },
+        ],
+      ],
+      [300, [{ kind: "step-end", id: "mock-tool-a", output: "auth required" }]],
+      [150, [{ kind: "text", text: n2, final: true }]],
+      [
+        100,
+        [
+          {
+            kind: "step-start",
+            id: "mock-tool-b",
+            icon: "monitor",
+            label: "Read local config",
+          },
+        ],
+      ],
+      [300, [{ kind: "step-end", id: "mock-tool-b", output: "{ model: 'gpt-5.5' }" }]],
+      [
+        150,
+        [
+          {
+            kind: "text",
+            text:
+              answer +
+              "\n\n```ts\n// the config that was read\nexport const model = 'gpt-5.5'\n```",
+            final: true,
+          },
+        ],
+      ],
+      [50, [{ kind: "run-end" }]],
+    ];
+  }
   // Saying "ask me" demos the question flow before the run continues.
   if (/\bask me\b/i.test(prompt)) {
     steps.splice(1, 0, [

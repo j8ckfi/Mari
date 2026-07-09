@@ -31,6 +31,7 @@ import {
   type AskUserAnswer,
 } from "@/components/ui/ask-user-questions";
 import { Markdown } from "@/components/chat/Markdown";
+import { copyText } from "@/lib/copy-text";
 import type { IconName } from "@/lib/icon-context";
 
 export type AnswerFn = (
@@ -129,23 +130,7 @@ function formatTime(ms?: number): string | undefined {
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      // Fallback for contexts where the async clipboard API is unavailable.
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      try {
-        document.execCommand("copy");
-      } catch {
-        /* give up silently */
-      }
-      document.body.removeChild(ta);
-    }
+    await copyText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 1200);
   };
@@ -153,7 +138,7 @@ function CopyButton({ text }: { text: string }) {
     <button
       onClick={copy}
       aria-label={copied ? "Copied" : "Copy message"}
-      className="flex size-6 items-center justify-center rounded-md text-muted-foreground/70 transition-colors duration-100 hover:bg-hover hover:text-foreground active:scale-95"
+      className="flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 transition-[color,background-color,transform] duration-100 hover:bg-hover hover:text-foreground active:scale-95"
     >
       {copied ? <IconCheck size={13} /> : <IconCopy size={13} />}
     </button>
@@ -185,18 +170,26 @@ function AssistantView({
   // The settled per-prose timestamp is the run's end (message-granular timing).
   const settledAt = item.endedAt ?? item.startedAt;
   const lastIndex = item.parts.length - 1;
+  // Only the final prose segment carries the time/copy meta row. Interleaved
+  // narration segments stay chrome-free — a meta row under each one reserves
+  // height even when hidden, which reads as arbitrary extra gaps mid-turn.
+  const lastProseIndex = item.parts.reduce(
+    (acc, p, i) => (p.kind === "prose" && p.text ? i : acc),
+    -1,
+  );
   return (
     <div className="flex w-full flex-col items-start gap-1.5 self-start">
       {item.parts.map((part, i) => {
         if (part.kind === "prose") {
           if (!part.text) return null;
+          const showMeta = i === lastProseIndex && !part.streaming;
           return (
             <ChatMessage
               key={part.id}
               from="assistant"
               // Time + copy appear once the segment has settled (not mid-stream).
-              time={part.streaming ? undefined : formatTime(settledAt)}
-              actions={part.streaming ? undefined : <CopyButton text={part.text} />}
+              time={showMeta ? formatTime(settledAt) : undefined}
+              actions={showMeta ? <CopyButton text={part.text} /> : undefined}
             >
               <Markdown streaming={part.streaming}>{part.text}</Markdown>
             </ChatMessage>
