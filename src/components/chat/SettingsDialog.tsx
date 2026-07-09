@@ -39,9 +39,13 @@ export function SettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {/* scroll-fade dissolves clipped content toward the scrollable edge so
-          the cut-off reads as "more below" instead of an abrupt crop. */}
-      <DialogContent size="lg" className="scroll-fade max-h-[85vh] overflow-y-auto">
+      {/* The panel stays solid; scrolling + the scroll-fade mask live on an
+          inner wrapper so only the CONTENT dissolves toward the clipped edge
+          (a mask on the panel itself would fade its background to transparent).
+          -m-6/p-6 reclaims the panel padding so the scrollport — and the fade —
+          reach the true panel edges. */}
+      <DialogContent size="lg" className="flex max-h-[85vh] flex-col">
+        <div className="scroll-fade -m-6 min-h-0 overflow-y-auto p-6">
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
         </DialogHeader>
@@ -214,6 +218,7 @@ export function SettingsDialog({
               Reset to defaults
             </button>
           </div>
+        </div>
         </div>
       </DialogContent>
     </Dialog>
