@@ -69,9 +69,23 @@ async function rename(path: string, name: string): Promise<void> {
   );
 }
 
+/** Raw session-file contents — the disk-first hydration read. */
+async function read(path: string): Promise<string> {
+  if (isTauri()) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return invoke<string>("pi_read_session", { path });
+  }
+  const res = await fetch(
+    `${bridgeHttpBase()}/session?path=${encodeURIComponent(path)}`,
+  );
+  if (!res.ok) throw new Error(`readSession failed: ${res.status}`);
+  return res.text();
+}
+
 export const piSessionStore: SessionStore = {
   list,
   watch,
   delete: deleteSession,
   rename,
+  read,
 };

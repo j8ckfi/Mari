@@ -4,7 +4,7 @@
 // Built on the base-nova (Base UI) Sidebar shell; session data is the
 // adapter's SessionStore listing, and rename targets the active session.
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   IconPlus,
   IconEdit,
@@ -89,6 +89,9 @@ export interface SessionSidebarProps {
   /** New session preset to a specific workspace (the hovered project's cwd). */
   onNewInProject: (cwd: string) => void;
   onSwitch: (path: string) => void;
+  /** Hover intent on a row — boot that session's engine in the background so
+   *  the eventual click lands on a warm process + hydrated transcript. */
+  onPrewarm?: (path: string) => void;
   /** Rename a session by disk path (works for any session, open or not). */
   onRename: (path: string, name: string) => void;
   /** Delete a session by disk path. */
@@ -108,6 +111,7 @@ export function SessionSidebar({
   onNew,
   onNewInProject,
   onSwitch,
+  onPrewarm,
   onRename,
   onDelete,
   onResize,
@@ -240,6 +244,7 @@ export function SessionSidebar({
               activePath={activePath}
               runningPaths={runningPaths}
               onSwitch={onSwitch}
+              onPrewarm={onPrewarm}
               onRename={onRename}
               onDelete={onDelete}
               onNewInProject={onNewInProject}
@@ -382,6 +387,7 @@ function ProjectGroup({
   activePath,
   runningPaths,
   onSwitch,
+  onPrewarm,
   onRename,
   onDelete,
   onNewInProject,
@@ -398,6 +404,7 @@ function ProjectGroup({
   activePath?: string;
   runningPaths?: Set<string>;
   onSwitch: (path: string) => void;
+  onPrewarm?: (path: string) => void;
   onRename: (path: string, name: string) => void;
   onDelete: (path: string) => void;
   onNewInProject: (cwd: string) => void;
@@ -503,6 +510,7 @@ function ProjectGroup({
               active={s.path === activePath}
               running={!!runningPaths?.has(s.path)}
               onSwitch={onSwitch}
+              onPrewarm={onPrewarm}
               onRename={onRename}
               onDelete={onDelete}
             />
@@ -526,6 +534,7 @@ function SessionRow({
   active,
   running,
   onSwitch,
+  onPrewarm,
   onRename,
   onDelete,
 }: {
@@ -533,11 +542,31 @@ function SessionRow({
   active: boolean;
   running: boolean;
   onSwitch: (path: string) => void;
+  onPrewarm?: (path: string) => void;
   onRename: (path: string, name: string) => void;
   onDelete: (path: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(session.name ?? session.title);
+
+  // Hover intent → prewarm. A short dwell filters drive-by passes so scrubbing
+  // the list doesn't spawn a process per row.
+  const prewarmTimer = useRef<number | undefined>(undefined);
+  const cancelPrewarm = () => {
+    if (prewarmTimer.current != null) {
+      window.clearTimeout(prewarmTimer.current);
+      prewarmTimer.current = undefined;
+    }
+  };
+  useEffect(() => cancelPrewarm, []);
+  const schedulePrewarm = () => {
+    if (!onPrewarm || active) return;
+    cancelPrewarm();
+    prewarmTimer.current = window.setTimeout(() => {
+      prewarmTimer.current = undefined;
+      onPrewarm(session.path);
+    }, 120);
+  };
 
   const startRename = () => {
     setDraft(session.name ?? session.title);
@@ -602,6 +631,8 @@ function SessionRow({
         <SidebarMenuButton
           isActive={active}
           onClick={() => onSwitch(session.path)}
+          onMouseEnter={schedulePrewarm}
+          onMouseLeave={cancelPrewarm}
           title={session.title}
           // The active row renders the (hover-only) rename pencil, which makes
           // the menu-button reserve pr-8 and truncate the title early even while

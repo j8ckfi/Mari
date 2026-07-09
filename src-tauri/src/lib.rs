@@ -25,6 +25,7 @@ pub fn run() {
             pi::pi_send,
             pi::pi_stop,
             pi::pi_list_sessions,
+            pi::pi_read_session,
             pi::pi_delete_session,
             pi::pi_rename_session
         ])

@@ -98,6 +98,21 @@ const server = Bun.serve<Session, undefined>({
       return Response.json(listSessions(cwd), { headers: CORS });
     }
 
+    // ── Raw session file (mirrors pi_read_session; disk-first hydration) ────
+    if (url.pathname === "/session") {
+      if (req.method === "OPTIONS")
+        return new Response(null, { status: 204, headers: CORS });
+      const base = join(homedir(), ".pi", "agent", "sessions");
+      const p = url.searchParams.get("path") || "";
+      if (!p.startsWith(base) || !p.endsWith(".jsonl"))
+        return new Response("bad path", { status: 400, headers: CORS });
+      try {
+        return new Response(readFileSync(p, "utf8"), { headers: CORS });
+      } catch (e) {
+        return new Response(String(e), { status: 404, headers: CORS });
+      }
+    }
+
     // ── Delete / rename a saved session (mirrors pi_delete/rename_session) ──
     if (url.pathname === "/delete" || url.pathname === "/rename") {
       if (req.method === "OPTIONS")

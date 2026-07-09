@@ -36,6 +36,38 @@ function collapse(s: string, n = 80): string {
 }
 
 /**
+ * Extract the ordered message dump from a session file's contents — the same
+ * `AgentMessage` objects a live `get_messages` RPC returns, so a transcript can
+ * hydrate straight from disk without an agent process. Entries whose inner
+ * message lacks a numeric timestamp inherit the entry's ISO timestamp.
+ */
+export function parseSessionMessages(content: string): unknown[] {
+  const out: unknown[] = [];
+  for (const raw of content.split("\n")) {
+    const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    if (!line) continue;
+    let e: Record<string, unknown>;
+    try {
+      e = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue; // torn tail write — skip, the live hydrate will catch up
+    }
+    if (e.type !== "message" || typeof e.message !== "object" || !e.message)
+      continue;
+    const msg = e.message as Record<string, unknown>;
+    if (typeof msg.timestamp !== "number" && typeof e.timestamp === "string") {
+      const t = Date.parse(e.timestamp);
+      if (!Number.isNaN(t)) {
+        out.push({ ...msg, timestamp: t });
+        continue;
+      }
+    }
+    out.push(msg);
+  }
+  return out;
+}
+
+/**
  * Parse a single session file's contents into a summary. Returns null for files
  * with no valid header or no user turn (empty/aborted shells we don't list).
  */

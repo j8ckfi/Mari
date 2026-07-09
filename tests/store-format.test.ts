@@ -5,6 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   encodeCwdDir,
+  parseSessionMessages,
   parseSessionMeta,
 } from "@/lib/adapters/pi/store-format";
 
@@ -82,6 +83,43 @@ describe("parseSessionMeta", () => {
         1,
       ),
     ).toBeNull();
+  });
+});
+
+describe("parseSessionMessages", () => {
+  test("extracts message entries in document order, skipping other line types", () => {
+    const msgs = parseSessionMessages(
+      file(
+        HEADER,
+        { type: "model_change", provider: "p", modelId: "m" },
+        { type: "message", message: { role: "user", content: "hi", timestamp: 111 } },
+        { type: "session_info", name: "x" },
+        { type: "message", message: { role: "assistant", content: [{ type: "text", text: "yo" }], timestamp: 222 } },
+      ),
+    );
+    expect(msgs).toEqual([
+      { role: "user", content: "hi", timestamp: 111 },
+      { role: "assistant", content: [{ type: "text", text: "yo" }], timestamp: 222 },
+    ]);
+  });
+
+  test("messages missing an inner timestamp inherit the entry's ISO timestamp", () => {
+    const msgs = parseSessionMessages(
+      file(HEADER, {
+        type: "message",
+        timestamp: "2026-07-07T19:39:25.407Z",
+        message: { role: "user", content: "hi" },
+      }),
+    ) as Array<{ timestamp?: number }>;
+    expect(msgs[0].timestamp).toBe(Date.parse("2026-07-07T19:39:25.407Z"));
+  });
+
+  test("garbage lines (torn tail writes) are skipped", () => {
+    const content =
+      JSON.stringify({ type: "message", message: { role: "user", content: "ok" } }) +
+      "\n" +
+      '{"type":"message","message":{"role":"assist'; // torn mid-write
+    expect(parseSessionMessages(content)).toHaveLength(1);
   });
 });
 

@@ -162,13 +162,16 @@ function App() {
     setActiveKey(key);
   }, []);
 
-  const openSession = useCallback((session: SessionSummary) => {
+  // `activate: false` prewarms: mount the engine (spawn the process, hydrate
+  // the transcript) without fronting it — hover-to-click latency vanishes.
+  const openSession = useCallback((session: SessionSummary, activate = true) => {
     const existing = tabsRef.current.find(
       (t) =>
         t.spec.sessionPath === session.path ||
         statusesRef.current[t.key]?.sessionFile === session.path,
     );
     if (existing) {
+      if (!activate) return;
       setActiveKey(existing.key);
       setTabs((prev) =>
         prev.map((t) =>
@@ -186,7 +189,7 @@ function App() {
         lastViewed: Date.now(),
       },
     ]);
-    setActiveKey(key);
+    if (activate) setActiveKey(key);
   }, []);
 
   // Sidebar switch passes a disk path — resolve it to the session record.
@@ -194,6 +197,15 @@ function App() {
     (sessionPath: string) => {
       const s = sessions.find((x) => x.path === sessionPath);
       if (s) openSession(s);
+    },
+    [sessions, openSession],
+  );
+
+  // Sidebar hover — boot the engine early so the eventual click is warm.
+  const prewarmSession = useCallback(
+    (sessionPath: string) => {
+      const s = sessions.find((x) => x.path === sessionPath);
+      if (s) openSession(s, false);
     },
     [sessions, openSession],
   );
@@ -358,6 +370,7 @@ function App() {
           onNew={newSession}
           onNewInProject={newSessionIn}
           onSwitch={switchSession}
+          onPrewarm={prewarmSession}
           onRename={renameSessionByPath}
           onDelete={deleteSessionByPath}
           onResize={handleResize}
@@ -511,7 +524,10 @@ function ChatSurface({
   // scroll controller re-anchors on.
   const scroll = useChatScroll(session.streaming, session.items);
 
-  const isHome = session.items.length === 0;
+  // A resumed session is never "home": its transcript exists on disk and is
+  // already hydrating — rendering the docked-composer layout immediately
+  // avoids the home-composer flash while it loads.
+  const isHome = session.items.length === 0 && !spec.sessionPath;
   const projectCwd = session.identity.cwd ?? spec.cwd;
   const threadName =
     session.identity.sessionName ??

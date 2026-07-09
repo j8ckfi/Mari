@@ -340,6 +340,8 @@ export interface SessionStore {
   delete(path: string): Promise<void>;
   /** Rename a session that has NO live process (live ones rename over RPC). */
   rename(path: string, name: string): Promise<void>;
+  /** Raw contents of one session file — the disk-first hydration read. */
+  read?(path: string): Promise<string>;
 }
 
 import type { Transport } from "./transport";
@@ -359,6 +361,11 @@ export interface AgentAdapter {
   createSession(ctx: AdapterSessionContext): AdapterSession;
   /** On-disk session store, if the CLI persists sessions (sidebar listing). */
   sessions?: SessionStore;
+  /** Rebuild a saved session's transcript straight from its on-disk file,
+   *  WITHOUT an agent process. The engine calls this the moment a resumed
+   *  session mounts so the transcript renders instantly; the live process's
+   *  own authoritative hydrate replaces it when the CLI comes up. */
+  loadTranscript?(sessionPath: string): Promise<ChatItem[]>;
   /** Override the process transport. Default: Tauri IPC on desktop, the WS
    *  dev bridge in the browser. The mock adapter supplies an in-memory one. */
   createTransport?(key: string): Transport;

@@ -104,10 +104,15 @@ export function useAgentSession(spec: AgentSessionSpec) {
     });
   }, [adapter, cwd, sessionPath, name]);
 
+  // True once the LIVE process has hydrated the transcript (get_messages) —
+  // from then on the disk snapshot is stale and must never apply.
+  const liveHydratedRef = useRef(false);
+
   // Fold one batch of adapter events: transcript events go to the reducer,
   // meta patches merge into engine state, activity nudges the session manager.
   const applyEvents = useCallback((events: AgentEvent[]) => {
     for (const ev of events) {
+      if (ev.kind === "hydrate") liveHydratedRef.current = true;
       switch (ev.kind) {
         case "meta":
           setMeta((prev) => ({
@@ -143,6 +148,28 @@ export function useAgentSession(spec: AgentSessionSpec) {
   );
   const sessionRef = useRef(session);
   sessionRef.current = session;
+
+  // Disk-first hydration: render the saved transcript the moment a resumed
+  // session mounts, in parallel with the process spawn (T3/Claude-Code style —
+  // the transcript is data, not process state). Skipped if the live hydrate or
+  // an optimistic user turn got there first; the live one always wins later.
+  useEffect(() => {
+    if (!sessionPath || !adapter.loadTranscript) return;
+    let stale = false;
+    adapter
+      .loadTranscript(sessionPath)
+      .then((items) => {
+        if (stale || liveHydratedRef.current) return;
+        if (stateRef.current.items.length > 0) return;
+        if (items.length > 0) dispatch({ kind: "hydrate", items });
+      })
+      .catch(() => {
+        /* unreadable file — the live hydrate covers it */
+      });
+    return () => {
+      stale = true;
+    };
+  }, [adapter, sessionPath]);
 
   useEffect(() => {
     const offLine = transport.onLine((line) =>

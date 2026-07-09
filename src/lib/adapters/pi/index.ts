@@ -31,6 +31,7 @@ import type {
   UserMessage,
 } from "./protocol";
 import { piSessionStore } from "./sessions";
+import { parseSessionMessages } from "./store-format";
 
 // Startup model. Overridable via VITE_PI_MODEL; defaults to a fast, available
 // codex model (the local Laguna default is often down).
@@ -457,4 +458,13 @@ export const piAdapter: AgentAdapter = {
   },
   createSession,
   sessions: piSessionStore,
+  // Disk-first hydration: the session file's `message` lines are the same
+  // AgentMessage dump `get_messages` returns, so the saved transcript renders
+  // before the pi process has even started booting.
+  async loadTranscript(sessionPath: string): Promise<ChatItem[]> {
+    const content = await piSessionStore.read!(sessionPath);
+    return buildItemsFromMessages(
+      parseSessionMessages(content) as AgentMessage[],
+    );
+  },
 };

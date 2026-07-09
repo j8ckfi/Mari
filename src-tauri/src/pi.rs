@@ -336,6 +336,15 @@ pub fn pi_delete_session(path: String) -> Result<(), String> {
     std::fs::remove_file(&p).map_err(|e| format!("delete failed: {e}"))
 }
 
+/// Raw contents of one saved session file — the disk-first hydration read
+/// (the frontend parses its `message` lines into a transcript without waiting
+/// for a pi process). Mirrors dev/pi-bridge.ts's `/session` endpoint.
+#[tauri::command]
+pub fn pi_read_session(path: String) -> Result<String, String> {
+    let p = valid_session_path(&path)?;
+    std::fs::read_to_string(&p).map_err(|e| format!("read failed: {e}"))
+}
+
 /// Rename a saved session by appending a `session_info` line — the listing
 /// reads the last one, so this wins. Used for sessions with no live process;
 /// the app renames open ones over RPC instead (pi owns that file).
