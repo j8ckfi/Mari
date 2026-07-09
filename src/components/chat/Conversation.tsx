@@ -9,7 +9,8 @@ import type {
   ChatItem,
   NoticeItem,
   QuestionItem,
-  Step,
+  RunPart,
+  WorkPart,
   UserItem,
 } from "@/lib/pi/reducer";
 import { ChatMessage } from "@/components/ui/chat-message";
@@ -37,12 +38,13 @@ export type AnswerFn = (
   response: { value: string } | { confirmed: boolean } | { cancelled: true },
 ) => void;
 
-// The ThinkingSteps timeline is for genuine agent work — tool calls and the
-// narration between them. Reasoning on its own isn't a "step"; a think→answer
-// turn should read as just the answer. So the timeline renders only when at
-// least one non-thinking step exists.
-function hasTimelineSteps(steps: Step[]): boolean {
-  return steps.some((s) => s.kind !== "thinking");
+// The ThinkingSteps timeline is for genuine agent work — tool calls (and the
+// reasoning around them). Reasoning on its own isn't a "step"; a think→answer
+// turn should read as just the answer. So a work chunk renders only when it
+// contains at least one tool call; a thinking-only chunk stays invisible at
+// rest (the live rose pill covers the reasoning phase).
+function workHasTool(part: RunPart): boolean {
+  return part.kind === "work" && part.steps.some((s) => s.kind === "tool");
 }
 
 export function Conversation({
@@ -63,15 +65,15 @@ export function Conversation({
     .find((i) => i.type === "assistant") as AssistantItem | undefined;
   const hasPendingQuestion = items.some((i) => i.type === "question");
   // The rose pill covers the whole reasoning phase: while streaming, before any
-  // real agent work (a tool/narration step) or answer lands. A model that only
-  // *thinks* then answers therefore shows just the live pill → answer, never a
-  // persistent timeline — matching hidden-reasoning models like GPT-5.5.
+  // visible agent work (a tool chunk) or prose lands. A model that only *thinks*
+  // then answers therefore shows just the live pill → answer, never a persistent
+  // timeline — matching hidden-reasoning models like GPT-5.5.
   const showThinkingPill =
     streaming &&
     !hasPendingQuestion &&
     !!lastAssistant &&
-    !hasTimelineSteps(lastAssistant.steps) &&
-    !lastAssistant.answer;
+    !lastAssistant.parts.some(workHasTool) &&
+    !lastAssistant.parts.some((p) => p.kind === "prose" && p.text.trim());
 
   return (
     <div className="mx-auto flex w-full max-w-[46rem] flex-col gap-4 px-6 py-8">
@@ -180,27 +182,38 @@ function AssistantView({
   item: AssistantItem;
   onExpandTrace?: () => void;
 }) {
+  // The settled per-prose timestamp is the run's end (message-granular timing).
+  const settledAt = item.endedAt ?? item.startedAt;
+  const lastIndex = item.parts.length - 1;
   return (
     <div className="flex w-full flex-col items-start gap-1.5 self-start">
-      {hasTimelineSteps(item.steps) && (
-        <AgentSteps
-          steps={item.steps}
-          streaming={item.streaming}
-          startedAt={item.startedAt}
-          endedAt={item.endedAt}
-          onExpand={onExpandTrace}
-        />
-      )}
-      {item.answer && (
-        <ChatMessage
-          from="assistant"
-          // Show the reply's time + copy once it has settled (not mid-stream).
-          time={item.streaming ? undefined : formatTime(item.endedAt ?? item.startedAt)}
-          actions={item.streaming ? undefined : <CopyButton text={item.answer} />}
-        >
-          <Markdown streaming={item.streaming}>{item.answer}</Markdown>
-        </ChatMessage>
-      )}
+      {item.parts.map((part, i) => {
+        if (part.kind === "prose") {
+          if (!part.text) return null;
+          return (
+            <ChatMessage
+              key={part.id}
+              from="assistant"
+              // Time + copy appear once the segment has settled (not mid-stream).
+              time={part.streaming ? undefined : formatTime(settledAt)}
+              actions={part.streaming ? undefined : <CopyButton text={part.text} />}
+            >
+              <Markdown streaming={part.streaming}>{part.text}</Markdown>
+            </ChatMessage>
+          );
+        }
+        // Reasoning-only chunks stay invisible at rest (see workHasTool).
+        if (!workHasTool(part)) return null;
+        return (
+          <WorkView
+            key={part.id}
+            part={part}
+            // Only the trailing chunk of a still-streaming run is "live".
+            live={item.streaming && i === lastIndex}
+            onExpand={onExpandTrace}
+          />
+        );
+      })}
       {item.error && (
         <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-[13px] text-destructive">
           {item.error}
@@ -220,18 +233,14 @@ function formatWorked(ms: number): string {
   return rem ? `Worked for ${m}m ${rem}s` : `Worked for ${m}m`;
 }
 
-// ── Agent progress timeline ──────────────────────────────────────────────
-function AgentSteps({
-  steps,
-  streaming,
-  startedAt,
-  endedAt,
+// ── Agent progress timeline (one work chunk) ─────────────────────────────
+function WorkView({
+  part,
+  live,
   onExpand,
 }: {
-  steps: Step[];
-  streaming: boolean;
-  startedAt?: number;
-  endedAt?: number;
+  part: WorkPart;
+  live: boolean;
   onExpand?: () => void;
 }) {
   // Collapsed by default — even while streaming. An open timeline that grows a
@@ -240,6 +249,7 @@ function AgentSteps({
   // reader can expand it to read, and doing so disengages follow (onExpand) so
   // subsequent steps still never yank them.
   const [open, setOpen] = useState(false);
+  const { steps, startedAt, endedAt } = part;
 
   const elapsed =
     startedAt != null && endedAt != null ? endedAt - startedAt : null;
@@ -254,7 +264,7 @@ function AgentSteps({
       className="w-full max-w-[34rem]"
     >
       <ThinkingStepsHeader>
-        {streaming ? (
+        {live ? (
           <ThinkingLabel />
         ) : elapsed != null ? (
           formatWorked(elapsed)
@@ -263,32 +273,25 @@ function AgentSteps({
         )}
       </ThinkingStepsHeader>
       <ThinkingStepsContent>
-        {steps.map((s, i) => {
-          // Free-form narration ("text") renders its full body inline as a
-          // muted description (never truncated). Tool/thinking steps keep a
-          // bold label with their output tucked into a nested collapsible.
-          const isText = s.kind === "text";
-          return (
-            <ThinkingStep
-              key={s.id}
-              icon={s.icon as IconName}
-              label={isText ? "" : s.label}
-              description={isText ? s.output ?? s.label : undefined}
-              status={s.status === "active" ? "active" : "complete"}
-              isLast={i === steps.length - 1}
-            >
-              {!isText && s.output && s.output.trim() && (
-                <ThinkingStepDetails
-                  summary={s.kind === "thinking" ? "Reasoning" : "Output"}
-                  details={s.output
-                    .replace(/\s+$/g, "")
-                    .split("\n")
-                    .slice(0, 18)}
-                />
-              )}
-            </ThinkingStep>
-          );
-        })}
+        {steps.map((s, i) => (
+          <ThinkingStep
+            key={s.id}
+            icon={s.icon as IconName}
+            label={s.label}
+            status={s.status === "active" ? "active" : "complete"}
+            isLast={i === steps.length - 1}
+          >
+            {s.output && s.output.trim() && (
+              <ThinkingStepDetails
+                summary={s.kind === "thinking" ? "Reasoning" : "Output"}
+                details={s.output
+                  .replace(/\s+$/g, "")
+                  .split("\n")
+                  .slice(0, 18)}
+              />
+            )}
+          </ThinkingStep>
+        ))}
       </ThinkingStepsContent>
     </ThinkingSteps>
   );

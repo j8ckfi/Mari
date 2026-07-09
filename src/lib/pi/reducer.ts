@@ -1,10 +1,15 @@
 // Folds the Pi event stream into a renderable conversation.
 //
-// Rendering model (matches Fluid's ThinkingSteps "agent progress" pattern):
-// an assistant run is ONE item with an ordered `steps[]` timeline — every
-// thinking pass, tool call, and intermediate narration becomes a step — plus
-// the final `answer` text shown below the timeline. Extension dialogs and
-// compaction/retry notices are separate items.
+// Rendering model: an assistant run is an ORDERED list of `parts`. Each part is
+// either `prose` (a rendered markdown segment) or `work` (a chunk of the
+// thinking/tool timeline). Prose is first-class and positional — text that
+// appears between two tool calls stays between them, and text that shares a
+// message with a tool call is NOT swallowed. Interleaving (prose → work →
+// prose → work) falls out for free; the "answer" is simply the trailing prose.
+//
+// This replaced an older `steps[] + answer` model whose single `answer` slot
+// could hold only the last tool-free message, so a terminal tool call (e.g.
+// goal_complete) or interleaved narration silently dropped real output.
 
 import type {
   AgentMessage,
@@ -18,7 +23,7 @@ import type {
 } from "./types";
 
 // ── View model ──────────────────────────────────────────────────────────────
-export type StepKind = "tool" | "thinking" | "text";
+export type StepKind = "tool" | "thinking";
 export type StepStatus = "active" | "complete" | "error";
 
 export interface Step {
@@ -32,14 +37,31 @@ export interface Step {
   status: StepStatus;
 }
 
+/** A rendered markdown segment of an assistant run. */
+export interface ProsePart {
+  kind: "prose";
+  id: string;
+  text: string;
+  streaming: boolean;
+}
+/** A contiguous chunk of the thinking/tool timeline between two prose segments. */
+export interface WorkPart {
+  kind: "work";
+  id: string;
+  steps: Step[];
+  /** Wall-clock span of this chunk → its own "Worked for Xs" header. */
+  startedAt?: number;
+  endedAt?: number;
+}
+export type RunPart = ProsePart | WorkPart;
+
 export interface AssistantItem {
   type: "assistant";
   id: string;
-  steps: Step[];
-  answer: string;
+  parts: RunPart[];
   streaming: boolean;
   error?: string;
-  /** Wall-clock run timing (live turns only) → the "Worked for Xs" header. */
+  /** Wall-clock run timing (live turns only) → per-prose settled timestamp. */
   startedAt?: number;
   endedAt?: number;
 }
@@ -77,6 +99,8 @@ export interface SessionState {
   currentAssistantId: string | null;
   /** The thinking step being streamed into for the current message, if any. */
   currentThinkingStepId: string | null;
+  /** The prose part being streamed into for the current message, if any. */
+  currentProseId: string | null;
   queue: { steering: string[]; followUp: string[] };
   seq: number;
 }
@@ -86,6 +110,7 @@ export const initialState: SessionState = {
   streaming: false,
   currentAssistantId: null,
   currentThinkingStepId: null,
+  currentProseId: null,
   queue: { steering: [], followUp: [] },
   seq: 0,
 };
@@ -123,9 +148,6 @@ function extractThinking(content: unknown): string {
     )
     .map((c) => c.thinking)
     .join("");
-}
-function hasToolCalls(content: unknown): boolean {
-  return normContent(content).some((c) => c.type === "toolCall");
 }
 function textFromResult(result: ToolResult | undefined): string {
   if (!result?.content) return "";
@@ -168,6 +190,68 @@ function toolStepMeta(name: string, args: unknown): { icon: string; label: strin
   }
 }
 
+// ── parts helpers ──────────────────────────────────────────────────────────
+function upsertStep(steps: Step[], step: Step): Step[] {
+  const i = steps.findIndex((s) => s.id === step.id);
+  if (i === -1) return [...steps, step];
+  const next = [...steps];
+  next[i] = { ...next[i], ...step };
+  return next;
+}
+function patchStep(steps: Step[], id: string, patch: Partial<Step>): Step[] {
+  return steps.map((s) => (s.id === id ? { ...s, ...patch } : s));
+}
+function replaceLast(parts: RunPart[], part: RunPart): RunPart[] {
+  return [...parts.slice(0, -1), part];
+}
+
+/** Add/update a work step in the trailing work part, opening a fresh one (and
+ *  closing nothing) if the trailing part is prose or the run is empty. */
+function stepIntoWork(
+  parts: RunPart[],
+  step: Step,
+  workId: string,
+  now: number,
+): RunPart[] {
+  const last = parts[parts.length - 1];
+  if (last?.kind === "work")
+    return replaceLast(parts, { ...last, steps: upsertStep(last.steps, step) });
+  return [...parts, { kind: "work", id: workId, steps: [step], startedAt: now }];
+}
+
+/** Patch a step wherever it lives, and settle its work chunk's timer while
+ *  the tool is still updating (endedAt tracks the latest activity). */
+function patchWorkStep(
+  parts: RunPart[],
+  id: string,
+  patch: Partial<Step>,
+): RunPart[] {
+  return parts.map((p) =>
+    p.kind === "work" && p.steps.some((s) => s.id === id)
+      ? { ...p, steps: patchStep(p.steps, id, patch) }
+      : p,
+  );
+}
+
+/** Create or update the trailing prose part. Creating one closes an open
+ *  trailing work chunk (stamps its endedAt) so its timer settles. */
+function writeProse(
+  parts: RunPart[],
+  proseId: string,
+  text: string,
+  streaming: boolean,
+  now: number,
+): RunPart[] {
+  const last = parts[parts.length - 1];
+  if (last?.kind === "prose" && last.id === proseId)
+    return replaceLast(parts, { ...last, text, streaming });
+  const base =
+    last?.kind === "work" && last.endedAt == null
+      ? replaceLast(parts, { ...last, endedAt: now })
+      : parts;
+  return [...base, { kind: "prose", id: proseId, text, streaming }];
+}
+
 // ── assistant-item mutation helper ─────────────────────────────────────────
 function updateAssistant(
   state: SessionState,
@@ -199,8 +283,7 @@ function ensureAssistant(state: SessionState): [SessionState, string] {
         {
           type: "assistant",
           id,
-          steps: [],
-          answer: "",
+          parts: [],
           streaming: true,
           startedAt: Date.now(),
         },
@@ -210,23 +293,13 @@ function ensureAssistant(state: SessionState): [SessionState, string] {
   ];
 }
 
-function upsertStep(steps: Step[], step: Step): Step[] {
-  const i = steps.findIndex((s) => s.id === step.id);
-  if (i === -1) return [...steps, step];
-  const next = [...steps];
-  next[i] = { ...next[i], ...step };
-  return next;
-}
-function patchStep(steps: Step[], id: string, patch: Partial<Step>): Step[] {
-  return steps.map((s) => (s.id === id ? { ...s, ...patch } : s));
-}
-
 // ── hydration ──────────────────────────────────────────────────────────────
 // Rebuild the conversation from a persisted `get_messages` dump (used when
 // switching to a saved session). A flat AgentMessage[] becomes the same
 // user/assistant-run item model the live reducer produces: consecutive
 // assistant + toolResult messages between two user turns collapse into ONE
-// AssistantItem with an ordered steps[] timeline + final answer.
+// AssistantItem whose blocks route to ordered prose/work parts, identically to
+// the live path so a reload is pixel-identical.
 function userText(msg: UserMessage): string {
   if (typeof msg.content === "string") return msg.content;
   return msg.content
@@ -239,13 +312,18 @@ export function buildItemsFromMessages(messages: AgentMessage[]): ChatItem[] {
   const items: ChatItem[] = [];
   let current: AssistantItem | null = null;
   let n = 0;
+  let seq = 0;
+
+  const flush = () => {
+    if (current) items.push(current);
+    current = null;
+  };
 
   for (const msg of messages) {
     const role = (msg as { role?: string }).role;
 
     if (role === "user") {
-      if (current) items.push(current);
-      current = null;
+      flush();
       const text = userText(msg as UserMessage);
       if (text.trim())
         items.push({
@@ -259,50 +337,52 @@ export function buildItemsFromMessages(messages: AgentMessage[]): ChatItem[] {
 
     if (role === "assistant") {
       if (!current)
-        current = { type: "assistant", id: `a${n++}`, steps: [], answer: "", streaming: false };
+        current = { type: "assistant", id: `a${n++}`, parts: [], streaming: false };
       const a = current;
-      // Timestamps span the run: earliest starts it, latest ends it.
+      // Timestamps span the run: earliest starts it, latest ends it. They also
+      // stamp per-chunk work timing (approximate — message granularity).
       const ts = (msg as AssistantMessage).timestamp;
       if (ts != null) {
         a.startedAt = a.startedAt ?? ts;
         a.endedAt = ts;
       }
-      const content = normContent((msg as AssistantMessage).content);
-      const calls = hasToolCalls(content);
+      const now = ts ?? a.endedAt ?? 0;
       if ((msg as AssistantMessage).stopReason === "error")
         a.error = (msg as AssistantMessage).errorMessage ?? "The model returned an error.";
-      for (const block of content) {
+      // Route each block in document order so prose ↔ tool ordering survives.
+      for (const block of normContent((msg as AssistantMessage).content)) {
         if (block.type === "thinking" && block.thinking.trim()) {
-          a.steps.push({
-            id: `${a.id}-s${a.steps.length}`,
-            kind: "thinking",
-            icon: "brain",
-            label: "Thinking",
-            output: block.thinking,
-            status: "complete",
-          });
+          a.parts = stepIntoWork(
+            a.parts,
+            {
+              id: `t${seq++}`,
+              kind: "thinking",
+              icon: "brain",
+              label: "Thinking",
+              output: block.thinking,
+              status: "complete",
+            },
+            `w${seq++}`,
+            now,
+          );
+          stampTrailingWork(a.parts, now);
         } else if (block.type === "toolCall") {
           const meta = toolStepMeta(block.name, block.arguments);
-          a.steps.push({
-            id: block.id,
-            kind: "tool",
-            icon: meta.icon,
-            label: meta.label,
-            status: "complete",
-          });
-        } else if (block.type === "text" && block.text.trim()) {
-          if (calls) {
-            a.steps.push({
-              id: `${a.id}-s${a.steps.length}`,
-              kind: "text",
-              icon: "dot",
-              label: short(block.text, 72),
-              output: block.text,
+          a.parts = stepIntoWork(
+            a.parts,
+            {
+              id: block.id,
+              kind: "tool",
+              icon: meta.icon,
+              label: meta.label,
               status: "complete",
-            });
-          } else {
-            a.answer = block.text;
-          }
+            },
+            `w${seq++}`,
+            now,
+          );
+          stampTrailingWork(a.parts, now);
+        } else if (block.type === "text" && block.text.trim()) {
+          a.parts = writeProse(a.parts, `p${seq++}`, block.text, false, now);
         }
       }
       continue;
@@ -310,20 +390,31 @@ export function buildItemsFromMessages(messages: AgentMessage[]): ChatItem[] {
 
     if (role === "toolResult" && current) {
       const tr = msg as ToolResultMessage;
-      const a = current;
-      const i = a.steps.findIndex((s) => s.id === tr.toolCallId);
-      if (i !== -1) {
-        a.steps[i] = {
-          ...a.steps[i],
-          status: tr.isError ? "error" : "complete",
-          output: tr.content?.map((c) => c.text ?? "").join("") || a.steps[i].output,
-        };
-      }
+      const output =
+        tr.content?.map((c) => c.text ?? "").join("") || undefined;
+      current.parts = current.parts.map((p) =>
+        p.kind === "work" && p.steps.some((s) => s.id === tr.toolCallId)
+          ? {
+              ...p,
+              endedAt: tr.timestamp ?? p.endedAt,
+              steps: patchStep(p.steps, tr.toolCallId, {
+                status: tr.isError ? "error" : "complete",
+                output: output ?? p.steps.find((s) => s.id === tr.toolCallId)?.output,
+              }),
+            }
+          : p,
+      );
     }
   }
 
-  if (current) items.push(current);
+  flush();
   return items;
+}
+
+/** Stamp the trailing work chunk's endedAt in place (hydration timing). */
+function stampTrailingWork(parts: RunPart[], now: number): void {
+  const last = parts[parts.length - 1];
+  if (last?.kind === "work") last.endedAt = now;
 }
 
 // ── reducer ──────────────────────────────────────────────────────────────
@@ -347,6 +438,7 @@ export function reduce(state: SessionState, ev: ReducerInput): SessionState {
         seq: state.seq + 1,
         currentAssistantId: null,
         currentThinkingStepId: null,
+        currentProseId: null,
         items: [
           ...state.items,
           {
@@ -370,13 +462,13 @@ export function reduce(state: SessionState, ev: ReducerInput): SessionState {
         streaming: true,
         currentAssistantId: id,
         currentThinkingStepId: null,
+        currentProseId: null,
         items: [
           ...state.items,
           {
             type: "assistant",
             id,
-            steps: [],
-            answer: "",
+            parts: [],
             streaming: true,
             startedAt: Date.now(),
           },
@@ -385,22 +477,36 @@ export function reduce(state: SessionState, ev: ReducerInput): SessionState {
     }
 
     case "agent_end": {
+      const now = Date.now();
       const s = updateAssistant(state, (a) => ({
         ...a,
         streaming: false,
-        endedAt: Date.now(),
-        steps: a.steps.map((st) =>
-          st.status === "active" ? { ...st, status: "complete" } : st,
+        endedAt: now,
+        parts: a.parts.map((p) =>
+          p.kind === "work"
+            ? {
+                ...p,
+                endedAt: p.endedAt ?? now,
+                steps: p.steps.map((st) =>
+                  st.status === "active" ? { ...st, status: "complete" } : st,
+                ),
+              }
+            : { ...p, streaming: false },
         ),
       }));
-      return { ...s, streaming: false, currentThinkingStepId: null };
+      return {
+        ...s,
+        streaming: false,
+        currentThinkingStepId: null,
+        currentProseId: null,
+      };
     }
 
     case "message_start": {
       const msg = ev.message as { role?: string };
       if (msg.role !== "assistant") return state;
-      // New message in the run → start a fresh thinking step next time.
-      return { ...state, currentThinkingStepId: null };
+      // New message in the run → fresh thinking step / prose segment next time.
+      return { ...state, currentThinkingStepId: null, currentProseId: null };
     }
 
     case "message_update": {
@@ -408,36 +514,47 @@ export function reduce(state: SessionState, ev: ReducerInput): SessionState {
       const text = extractText(content);
       const thinking = extractThinking(content);
       let [next, id] = ensureAssistant(state);
-      let thinkingStepId = next.currentThinkingStepId;
+      let thinkId = next.currentThinkingStepId;
+      let proseId = next.currentProseId;
+      let seq = next.seq;
+      const now = Date.now();
 
       next = updateAssistant({ ...next, currentAssistantId: id }, (a) => {
-        let steps = a.steps;
+        let parts = a.parts;
         if (thinking) {
-          if (!thinkingStepId) {
-            thinkingStepId = `s${next.seq}`;
-            steps = upsertStep(steps, {
-              id: thinkingStepId,
-              kind: "thinking",
-              icon: "brain",
-              label: "Thinking",
-              output: thinking,
-              status: "active",
-            });
+          if (!thinkId) {
+            thinkId = `t${seq++}`;
+            parts = stepIntoWork(
+              parts,
+              {
+                id: thinkId,
+                kind: "thinking",
+                icon: "brain",
+                label: "Thinking",
+                output: thinking,
+                status: "active",
+              },
+              `w${seq++}`,
+              now,
+            );
           } else {
-            steps = patchStep(steps, thinkingStepId, { output: thinking });
+            parts = patchWorkStep(parts, thinkId, { output: thinking });
           }
         }
-        // Tentatively show streaming text as the answer; message_end demotes it
-        // to a narration step if this message turns out to call tools.
-        return { ...a, steps, answer: text };
+        // Stream text straight into a positional prose part — never demoted, so
+        // no flicker/yank when a tool call follows in the same message.
+        if (text) {
+          if (!proseId) proseId = `p${seq++}`;
+          parts = writeProse(parts, proseId, text, true, now);
+        }
+        return { ...a, parts };
       });
 
       return {
         ...next,
-        seq: thinking && thinkingStepId && !state.currentThinkingStepId
-          ? next.seq + 1
-          : next.seq,
-        currentThinkingStepId: thinkingStepId,
+        seq,
+        currentThinkingStepId: thinkId,
+        currentProseId: proseId,
       };
     }
 
@@ -452,69 +569,72 @@ export function reduce(state: SessionState, ev: ReducerInput): SessionState {
       const content = msg.content ?? [];
       const text = extractText(content);
       const thinking = extractThinking(content);
-      const calls = hasToolCalls(content);
       const error =
         msg.stopReason === "error"
           ? (msg.errorMessage ?? "The model returned an error.")
           : undefined;
 
       let [next, id] = ensureAssistant(state);
-      const thinkingStepId = next.currentThinkingStepId;
+      let thinkId = next.currentThinkingStepId;
+      let proseId = next.currentProseId;
+      let seq = next.seq;
+      const now = Date.now();
 
       next = updateAssistant({ ...next, currentAssistantId: id }, (a) => {
-        let steps = a.steps;
-        // Finalize the thinking step for this message.
-        if (thinkingStepId && thinking) {
-          steps = patchStep(steps, thinkingStepId, {
+        let parts = a.parts;
+        // Finalize this message's thinking step.
+        if (thinkId && thinking) {
+          parts = patchWorkStep(parts, thinkId, {
             output: thinking,
             status: "complete",
           });
         }
-        if (calls) {
-          // This message's text is narration before a tool call → a step.
-          if (text.trim()) {
-            steps = upsertStep(steps, {
-              id: `s${next.seq}`,
-              kind: "text",
-              icon: "dot",
-              label: short(text, 72),
-              output: text,
-              status: "complete",
-            });
-          }
-          return { ...a, steps, answer: "", error: error ?? a.error };
+        // Finalize this message's prose (tool calls in the same message do NOT
+        // erase it — they become the next work chunk via tool_execution_start).
+        if (text) {
+          if (!proseId) proseId = `p${seq++}`;
+          parts = writeProse(parts, proseId, text, false, now);
         }
-        // Final message of the run → its text is the answer.
-        return { ...a, steps, answer: text || a.answer, error: error ?? a.error };
+        return { ...a, parts, error: error ?? a.error };
       });
 
       return {
         ...next,
-        seq: calls && text.trim() ? next.seq + 1 : next.seq,
+        seq,
         currentThinkingStepId: null,
+        currentProseId: null,
       };
     }
 
     case "tool_execution_start": {
       let [next, id] = ensureAssistant(state);
       const meta = toolStepMeta(ev.toolName, ev.args);
+      const now = Date.now();
+      const workId = `w${next.seq}`;
       next = updateAssistant({ ...next, currentAssistantId: id }, (a) => ({
         ...a,
-        steps: upsertStep(a.steps, {
-          id: ev.toolCallId,
-          kind: "tool",
-          icon: meta.icon,
-          label: meta.label,
-          status: "active",
-        }),
+        parts: stepIntoWork(
+          a.parts,
+          {
+            id: ev.toolCallId,
+            kind: "tool",
+            icon: meta.icon,
+            label: meta.label,
+            status: "active",
+          },
+          workId,
+          now,
+        ),
       }));
-      return next;
+      // A work chunk opened → the current prose segment is done; later text
+      // starts a fresh prose part (a new bubble below this chunk).
+      return { ...next, seq: next.seq + 1, currentProseId: null };
     }
 
     case "tool_execution_update":
       return updateAssistant(state, (a) => ({
         ...a,
-        steps: patchStep(a.steps, ev.toolCallId, {
+        parts: patchWorkStep(a.parts, ev.toolCallId, {
           output: textFromResult(ev.partialResult),
         }),
       }));
@@ -522,7 +642,7 @@ export function reduce(state: SessionState, ev: ReducerInput): SessionState {
     case "tool_execution_end":
       return updateAssistant(state, (a) => ({
         ...a,
-        steps: patchStep(a.steps, ev.toolCallId, {
+        parts: patchWorkStep(a.parts, ev.toolCallId, {
           status: ev.isError ? "error" : "complete",
           output: textFromResult(ev.result),
         }),
