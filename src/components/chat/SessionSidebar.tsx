@@ -1,8 +1,8 @@
 // The session sidebar, organised the way Codex / Claude Code do it: every chat
 // belongs to a PROJECT (the directory it runs in). Projects are collapsible and
 // drag-to-reorder, with both the order and the collapsed set persisted locally.
-// Built on the base-nova (Base UI) Sidebar shell; session data is the disk-read
-// listing from usePiSession, and rename targets the active session.
+// Built on the base-nova (Base UI) Sidebar shell; session data is the
+// adapter's SessionStore listing, and rename targets the active session.
 
 import { useCallback, useMemo, useState } from "react";
 import {

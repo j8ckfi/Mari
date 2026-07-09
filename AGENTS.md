@@ -1,179 +1,135 @@
-# AGENTS.md — Mari working notes
+# AGENTS.md — read this first
 
-Tribal knowledge for anyone (human or agent) working on Mari. The stuff that
-isn't obvious from the code, and the traps that already bit us. Keep this
-current — when you learn something the hard way, add it here.
+Mari is a desktop frontend for **agent CLIs**. It ships wired to
+[Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent), but the
+repo's real objective is to be **the easiest possible way to put a polished
+face on ANY agent CLI that has a programmatic/JSONL mode**: fork → write one
+adapter file → go.
 
----
+If you're an agent (or human) dropped in blind, this file is the map. Deep
+dives live in `docs/`:
 
-## What Mari is
-
-A Tauri 2 (Rust core) + React desktop client for **Pi** (`pi --mode rpc`), a
-Claude-Code-style coding agent with a bidirectional JSONL RPC protocol over
-stdin/stdout. Mari does not embed Pi — it spawns the user's installed `pi`
-binary and bridges its protocol to the webview.
-
-Design bet: **taste is the differentiator.** Calm blank-slate surface, motion
-that means something, deep polish on the chat surface.
-
----
-
-## Two runtimes, one frontend
-
-The React app is transport-agnostic (`src/lib/pi/client.ts`, `createPiTransport(key)`):
-
-- **Desktop (Tauri):** the Rust core (`src-tauri/src/pi.rs`) owns the `pi`
-  child. Commands go through `invoke("pi_start"|"pi_send"|"pi_stop")`; events
-  come back on the `pi://event` Tauri event as `{key, line}` envelopes. A
-  module-level hub demuxes envelopes by key.
-- **Browser (dev):** `dev/pi-bridge.ts` — a Bun WebSocket server on **:4317**
-  that spawns one `pi` per socket. Lets you iterate on UI with Vite HMR and **no
-  Rust rebuild**. `VITE_PI_BRIDGE_URL` overrides the URL.
-
-Anything protocol-shaped must work through **both** transports. When you add a
-command/event, wire it in `client.ts` for Tauri and confirm the bridge relays it.
-
-### Dev loops
-
-- **UI-only work:** `bun run dev` (Vite :1420) + `bun dev/pi-bridge.ts`. Fast.
-  `.claude/launch.json` has a `mari-preview` config (port 5199) for the Claude
-  Preview MCP.
-- **Anything touching Rust (`pi.rs`/`lib.rs`):** `bun run tauri dev`, or
-  `tauri build` + install (see below). Rust changes do **not** hot-reload.
-- Working Pi providers vary by environment; `openai-codex/gpt-5.5` is a reliable
-  default. The local Laguna default is often down.
+| Doc | What it covers |
+| --- | --- |
+| [docs/ADAPTERS.md](docs/ADAPTERS.md) | **The one seam.** How to point Mari at a new agent CLI, step by step. |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Dataflow, session model, the two runtimes, the hosts, invariants. |
+| [docs/FRONTEND.md](docs/FRONTEND.md) | The design system: shape, motion, surfaces, component landmarks. |
 
 ---
 
-## Session model: one process per session (warm pool)
+## Forking: what to change, what to keep
 
-Pi is **one-session-per-process** (`switch_session` swaps the single active
-session in a process). Mari instead runs **one `pi` process per open session**
-so background agents keep streaming when you navigate away.
+- **Change `src/config.ts`** — the fork knob. Import your adapter, set `agent`.
+- **Write your adapter in `src/lib/adapters/<your-cli>/`** — copy
+  `src/lib/adapters/mock/` (smallest complete example) and follow
+  [docs/ADAPTERS.md](docs/ADAPTERS.md). `pi/` is the full-featured reference,
+  `claude-code/` a second real-world example.
+- **Rewrite [docs/FRONTEND.md](docs/FRONTEND.md)** — this is important and
+  easy to get wrong: FRONTEND.md documents *Mari's* design taste (its radii,
+  motion rules, restraint). It is **not gospel for your fork** — it's the
+  design contract agents working on *this* repo follow. When you fork and
+  develop your own look, **replace that file with your own design language**,
+  so agents building your fork follow *your* rules instead of inheriting
+  Mari's. A fork that keeps FRONTEND.md unedited will forever get PRs that
+  look like Mari.
+- **Keep `src/lib/agent/`** — the neutral core (view model, reducer,
+  transports, engine hook). It's backend-agnostic by construction; if you find
+  yourself editing it to make your CLI fit, the change probably belongs in
+  your adapter. Genuine gaps in the contract → extend the core, add a test.
 
-- `src/App.tsx` is the **session manager**: holds tabs, the active key, per-engine
-  status, and mounts one `<SessionEngine>` (which calls `usePiSession`) per tab.
-- **Warm pool reaping** (App.tsx): keep the active tab + every *running*
-  (streaming) tab + the last `settings.warmPoolSize` recently-viewed idle tabs;
-  unmount (→ kill process) the rest. Running sessions are never reaped.
-- `usePiSession` is the **per-session engine**: owns one transport, folds events
-  into the reducer, tracks model/identity/stats, exposes the session actions.
+## The shape of the system
 
-### Process keys MUST be `crypto.randomUUID()`
+```
+                    (one per open session/tab)
+┌─ your CLI ──► stdout JSONL ──► Transport ──► AdapterSession.handleLine()
+│   child                        (Tauri IPC          │  wire → AgentEvent[]
+│                                 or WS bridge)      ▼
+│                                              core reducer  ──► ChatItem[]
+│                                              (src/lib/agent/reducer.ts)   │
+│                                                                           ▼
+└── stdin  ◄── Transport.send ◄── adapter intents ◄── UI actions ◄── React components
+               (prompt / abort / setModel / …)
+```
 
-Not a module counter. HMR resets module state to 0 while React keeps the live
-tabs, so a counter reissues a key that collides with an existing tab → two tabs
-match `activeKey` and both render (the "stacked panes" bug). A UUID can't collide
-across an HMR reload. See `nextKey()` in App.tsx.
+- Everything protocol-shaped lives in an **adapter** (`src/lib/adapters/*`).
+- Everything rendering-shaped consumes the **neutral view model**
+  (`ChatItem` et al. in `src/lib/agent/types.ts`). No component ever sees a
+  wire event.
+- The **capabilities object** on your adapter gates UI chrome: no `models`
+  capability → no model picker renders, and so on. A minimal adapter
+  (spawn + prompt + streamed text) yields a complete working app.
+- Hosts (the Rust core / dev bridge) are **protocol-blind**: they spawn the
+  `SpawnSpec` your adapter builds (`bin` + `args` + `cwd`) and shuttle JSONL
+  lines. The only Pi-specific host code is the sidebar's session-store
+  listing, kept at the bottom of `src-tauri/src/pi.rs`.
 
----
+## Dev loops
 
-## The `/Applications` PATH trap (important)
+- **UI-only work:** `bun run dev` (Vite :1420) + `bun dev/pi-bridge.ts`
+  (WS bridge :4317, spawns one CLI child per session). Fast, no Rust rebuild.
+  `.claude/launch.json` has a `mari-preview` config (port 5199) for the
+  Claude Preview MCP.
+- **No backend at all:** open `/?agent=mock` — the mock adapter streams a
+  scripted response with zero external dependencies. Ideal for pure UI work
+  and what the e2e suite drives.
+- **Adapter selection in dev:** `?agent=pi|mock|claude-code` URL param or
+  `VITE_AGENT=…` env (see `src/config.ts`). Forks change the default import.
+- **Anything touching Rust (`src-tauri/`):** `bun run tauri dev`, or
+  `tauri build` + install (below). Rust does **not** hot-reload.
+- Working Pi providers vary by environment; `openai-codex/gpt-5.5` is a
+  reliable default (`VITE_PI_MODEL` overrides). The local Laguna default is
+  often down.
 
-`pi` is a `#!/usr/bin/env node` script. A Finder-launched app inherits a **bare
-PATH** (`/usr/bin:/bin:…`) with no `~/.local/bin`, so `env` can't find `node`,
-`pi` dies instantly, and the UI shows "Pi disconnected." `tauri dev` works only
-because it inherits your terminal PATH.
+## Tests — run them, extend them
 
-Fix lives in `pi.rs` `augmented_path()`: probe the login shell's PATH
-(`$SHELL -lc`, non-interactive to avoid hangs, markers to isolate from rc noise)
-+ a static fallback set (`~/.local/bin`, `~/.bun/bin`, homebrew, …), cached. Set
-on the spawned child's PATH. Settings can add extra dirs / override the binary
-(`StartOptions.piBin` / `pathDirs`, camelCase serde-renamed on the Rust side).
+```sh
+bun run test   # unit + fixture tests (tests/): reducer fold, adapter translation
+bun run e2e    # Playwright against the real UI + mock adapter (e2e/)
+bunx tsc --noEmit                                  # typecheck
+cargo check --manifest-path src-tauri/Cargo.toml   # Rust core
+```
 
-**Any time Pi "won't connect from the installed app," suspect PATH first.** Pull
-`pi://stderr` to confirm before assuming a credentials issue.
+CI (`.github/workflows/ci.yml`) runs all four. House rules:
 
----
+- **New adapter → new fixture test.** Record/craft a wire-event stream, fold
+  it through `createSession().handleLine` + the core reducer, assert the
+  `ChatItem`s (see `tests/pi-adapter.test.ts` for the pattern).
+- **Core reducer changes → cover them in `tests/reducer.test.ts`.** That file
+  is the contract every backend relies on.
+- The e2e suite needs no credentials — keep it that way (it drives the mock).
 
-## Reducer / hydration safety
+## Gotchas cheat-sheet (hard-won, don't relearn)
 
-- `reduce()` (`src/lib/pi/reducer.ts`) folds the Pi event stream into view items.
-- `normContent()` coerces message content (string | undefined | array) into a
-  block array. Pi sometimes sends string content; without normalization a
-  `content.some(...)` blows up and white-screens the app. Every consumer must go
-  through the normalizers.
-- Each `<SessionEngine>` is wrapped in a class **error boundary** so a malformed
-  transcript takes down only that session, not the whole app.
+- **Process keys are `crypto.randomUUID()`** (`nextKey()` in App.tsx), never a
+  module counter — HMR resets module state while React keeps live tabs, and a
+  reissued key renders two panes at once.
+- **No React StrictMode** (main.tsx): it double-invokes effects, which would
+  spawn/kill the stateful CLI subprocess twice on mount.
+- **"Won't connect from the installed app" → suspect PATH first.** GUI apps
+  launched from Finder get a bare PATH. The fix (login-shell probe + fallback
+  dirs, generic bare-bin resolution) lives in `src-tauri/src/pi.rs`
+  (`augmented_path`, `resolve_bin`). Pull `pi://stderr` to confirm before
+  assuming credentials.
+- **Malformed content must never white-screen.** Adapters normalize wire
+  content (string | array | missing — see `normContent` in the Pi adapter);
+  each session is wrapped in an error boundary so one bad transcript takes
+  down only itself. Preserve both layers.
+- **Session-store parsing has three mirrors:** `store-format.ts` (TS),
+  `dev/pi-bridge.ts` (reads disk with it), `src-tauri/src/pi.rs` (Rust port).
+  Change one → change all three (tests cover the TS one).
+- **`pgrep` for bridge-spawned CLIs:** they show in `ps` as the bare binary,
+  not the full arg string. Use `pgrep -P <bridge-pid>`.
+- **Claude Preview MCP quirks:** the headless browser reports
+  `window.innerHeight === 0`, so scroll/viewport-height behavior can't be
+  trusted there — assert per-element geometry/classes instead, and verify true
+  scrolling in the desktop app. Offcanvas sidebar content may be unmounted
+  while collapsed; toggle it open before asserting on it.
+- **Commit identity:** commits in this repo use
+  `git -c user.name="Mari" -c user.email="dovakinvsalduin444444@gmail.com"`.
+- **Foreground `sleep` is blocked** in the agent harness; use background tasks
+  / until-loops to wait on conditions.
 
----
-
-## Sidebar / session sync
-
-- The sidebar reads the on-disk session list (`~/.pi/agent/sessions`), grouped by
-  project (cwd). Order + collapsed-set persist in localStorage.
-- **Durability:** a `notify` filesystem watcher in Rust emits
-  `pi://sessions-changed`; the browser path polls. A session written by *any*
-  process — even a terminal `pi` — syncs into the sidebar within ~120ms
-  (debounced). Don't add a manual "refresh" path; keep the watch authoritative.
-
----
-
-## Model + thinking pickers
-
-- **Model picker** (`ModelPicker.tsx`) is a Base UI **Combobox** — searchable
-  (200+ models), auto-focused input, opens **upward** and pinned
-  (`collisionAvoidance={{ side: "none" }}`) so it never flips. Grouped by provider.
-- **Thinking picker** is a plain Base UI **Select** (few options).
-- **Thinking levels are model-aware** (`src/lib/pi/thinking.ts`): read each
-  model's `thinkingLevelMap` from `get_available_models` and mirror pi-ai's
-  `getSupportedThinkingLevels` — non-reasoning models hide the picker; GLM-5.2
-  shows only High + Max; `xhigh` renders as "Max". **Never hard-code the level
-  list.** Note the *same* model id under different providers can have different
-  maps.
-
----
-
-## Look & feel conventions
-
-- **Squircle / radius system** lives in `src/lib/shape-context.tsx`. No
-  `ShapeProvider` is mounted, so `useShape()` falls back to `shapeMap.pill` —
-  that object drives most corner radii app-wide (despite the name it's been
-  tuned "properly square": container 8px, items 5px). `--radius` (index.css,
-  6px) cascades to `rounded-sm/md/lg/xl` via `@theme`. Genuinely circular
-  controls (send button, model/thinking pills, dots) use `rounded-full` directly.
-- **Motion** (Emil Kowalski school): custom easings (`--ease-out:
-  cubic-bezier(0.23,1,0.32,1)`), durations <300ms for UI, `:active` scale 0.97,
-  origin-aware popovers, never `scale(0)` / `ease-in` / `transition: all`.
-- **NEVER use a pulsing/pinging green dot for the agent-working indicator.** It
-  was rejected on sight. Use expressive assets (title shimmer `.shimmer-run`,
-  etc.).
-- Blank slate: no border beam, no connection status dot. The "Pi disconnected"
-  banner is the only connection affordance (it's load-bearing — the reconnect).
-
----
-
-## Settings
-
-`src/lib/settings.ts` — a `SettingsProvider` over plain **localStorage** (works
-identically in the Tauri webview and browser dev; no store plugin, no Rust
-round-trip). It also owns **theme** application (system/light/dark, live). Values
-that must reach Rust (`piBin`, `pathDirs`) are read here and passed through
-`pi_start`'s options — Rust stays stateless. App version is injected via a Vite
-`define` (`__APP_VERSION__`).
-
----
-
-## The app icon pipeline (learned the hard way)
-
-The source is an **Icon Composer** `.icon` bundle (macOS 26) at
-`src-tauri/icons/source/MariIcon.icon`. Tauri ships one static icon.
-
-**Rule: do NOT hand-composite the icon.** `xcrun actool` renders the `.icon`,
-but for a standalone `.icns` it only emits the **light** appearance (dark pixels
-are locked in an adaptive asset in the compiled `Assets.car`). Hand-compositing
-the dark variant lost Icon Composer's gloss/bevel and looked broken.
-
-**Do this instead:** export the appearance you want straight from Icon Composer
-(File → Export → Dark, 1024). Icon Composer's export is full-bleed (iOS framing),
-so inset it to the macOS grid (~824/1024, centered) before slicing. Then
-`bunx tauri icon <inset-master>.png`. See `src-tauri/icons/source/README.md`.
-
-Dock not updating after a rebuild? It's the macOS icon cache: `killall Dock`.
-
----
-
-## Build / install workflow
+## Build / install (desktop)
 
 ```sh
 bun run tauri build
@@ -185,57 +141,37 @@ killall Dock          # refresh the dock icon
 open /Applications/Mari.app
 ```
 
-> The bundle is `Mari.app` (productName is `Mari`); the identifier stays
-> `com.mari.desktop`. macOS's default filesystem is case-insensitive, so an
-> in-place updater swap over an older `mari.app` resolves to the same path.
+`tauri dev` runs a bare binary (no bundle), so the dock icon only reflects a
+bundled build.
 
-`tauri dev` runs a bare binary (no bundle), so the **dock icon only reflects a
-bundled build**, not dev.
+### The app icon pipeline (learned the hard way)
 
----
+The source is an Icon Composer `.icon` bundle at
+`src-tauri/icons/source/MariIcon.icon`. **Do NOT hand-composite the icon** —
+export the appearance you want straight from Icon Composer (File → Export,
+1024), inset it to the macOS grid (~824/1024, centered), then
+`bunx tauri icon <inset-master>.png`. Details in
+`src-tauri/icons/source/README.md`. Dock not updating? `killall Dock`.
 
 ## Releases & updates
 
 Auto-update = Tauri updater plugin + a signed GitHub Release carrying a
 `latest.json` manifest.
 
-- Signing keypair: `bunx tauri signer generate`. **Public key → tauri.conf.json.
-  Private key + password → GitHub repo secrets** (`TAURI_SIGNING_PRIVATE_KEY`,
-  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) — set via `gh secret set`, never
-  committed. Losing the key means users must reinstall once.
-- `.github/workflows/release.yml` (tauri-action) builds/signs/publishes on a
-  `v*` tag.
+- Signing keypair: `bunx tauri signer generate`. **Public key →
+  tauri.conf.json. Private key + password → GitHub repo secrets**
+  (`TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) — set via
+  `gh secret set`, never committed. Losing the key means users reinstall once.
 - **Cut a release:** bump the version in `package.json` **and**
   `src-tauri/tauri.conf.json` (keep them in sync), then
-  `git tag vX.Y.Z && git push --tags`. Watch with `gh run watch`.
+  `git tag vX.Y.Z && git push --tags`. `.github/workflows/release.yml`
+  (tauri-action) builds/signs/publishes. Watch with `gh run watch`.
 - **Not notarized** (deliberate, for now): first install needs right-click →
   Open, and unsigned auto-updates can occasionally be re-quarantined by
-  Gatekeeper. If self-replace gets flaky, fall back to a "new version → download"
-  nudge until notarization is added.
+  Gatekeeper. If self-replace gets flaky, fall back to a "new version →
+  download" nudge until notarization is added.
 
 ---
 
-## Verifying with the Claude Preview MCP
-
-The headless preview browser reports **`window.innerHeight === 0`**, so anything
-scroll/viewport-height-dependent (seat-at-top, jump-to-latest reappearance,
-popup flip direction, dialog backdrop coverage) can't be trusted there — but
-`getBoundingClientRect` on individual elements, class assertions, and computed
-styles **do** work. Verify geometry per-element; verify true scroll behavior on
-the desktop app.
-
-Offcanvas sidebar content may be unmounted when collapsed — toggle it open before
-asserting on sidebar elements.
-
----
-
-## Gotchas cheat-sheet
-
-- **`pgrep` for bridge-spawned pi:** the bridge spawns `pi` via `Bun.spawn(["pi",…])`,
-  so it shows in `ps` as bare `pi`, not `pi --mode rpc`. Use `pgrep -P <bridge-pid>`.
-- **Foreground `sleep` is blocked** in the harness; use background tasks /
-  until-loops to wait on conditions.
-- **Commit identity:** commits in this repo use
-  `git -c user.name="Mari" -c user.email="dovakinvsalduin444444@gmail.com"`.
-- **No React StrictMode** (main.tsx): it double-invokes effects, which would
-  spawn/kill the stateful `pi` subprocess twice on mount.
+*Keep this file current: when you learn something the hard way, add it here or
+to the right doc in `docs/`.*

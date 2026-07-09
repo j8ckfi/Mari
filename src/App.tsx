@@ -31,7 +31,7 @@ import type { SessionSummary } from "@/lib/agent/types";
 import { cn } from "@/lib/utils";
 
 // ── Session manager types ────────────────────────────────────────────────────
-// One open session = one tab = one mounted SessionEngine = one Pi process.
+// One open session = one tab = one mounted SessionEngine = one CLI process.
 interface TabSpec {
   cwd?: string;
   sessionPath?: string;
@@ -421,9 +421,9 @@ class EngineBoundary extends Component<
 }
 
 // ── Session engine ───────────────────────────────────────────────────────────
-// Runs one Pi session's hook. Reports status up and (only when it's the active
-// tab) renders the chat surface. Background engines render nothing but keep
-// reducing their event stream, so their agent keeps running off screen.
+// Runs one agent session's hook. Reports status up and (only when it's the
+// active tab) renders the chat surface. Background engines render nothing but
+// keep reducing their event stream, so their agent keeps running off screen.
 function SessionEngine({
   procKey,
   spec,

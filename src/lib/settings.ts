@@ -2,9 +2,9 @@
 //
 // Storage is plain localStorage: it works identically in the Tauri webview
 // (persisted in the app's data dir) and in browser dev, so no store plugin or
-// Rust round-trip is needed. Anything that must reach the Rust side (the pi
-// binary path / extra PATH dirs) is read here and passed through pi_start's
-// options — Rust stays stateless.
+// Rust round-trip is needed. Anything that must reach the host (the CLI
+// binary path / extra PATH dirs) is read at spawn-build time and travels
+// inside the SpawnSpec — Rust stays stateless.
 
 import {
   createContext,
