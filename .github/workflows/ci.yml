@@ -1,0 +1,36 @@
+# Typecheck + unit/fixture tests + browser e2e (mock adapter — no CLI or
+# credentials needed). Rust compile check keeps the Tauri core honest without
+# a full bundle build.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: bunx tsc --noEmit
+      - name: Unit + fixture tests
+        run: bun run test
+      - name: Install Playwright chromium
+        run: bunx playwright install --with-deps chromium
+      - name: E2E (mock adapter)
+        run: bun run e2e
+
+  rust:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: cargo check
+        run: cargo check --manifest-path src-tauri/Cargo.toml
