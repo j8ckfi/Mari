@@ -2,6 +2,8 @@
 
 A native macOS desktop client for CLI coding agents, built with Tauri 2 + React.
 
+<img width="1702" height="1070" alt="image" src="https://github.com/user-attachments/assets/6eb83a17-6e4c-4717-971e-5da924865356" />
+
 Mari is two things:
 
 1. **A frontend for [Pi](https://www.pi.dev)** —
