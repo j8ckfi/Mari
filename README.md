@@ -47,6 +47,8 @@ credentials.
 
 ## Quick start
 
+Install from releases (mac-only, for now), or:
+
 ```sh
 bun install
 
