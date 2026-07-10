@@ -21,7 +21,7 @@ Mari is two things:
 Give it this repo and tell it what you want to build. That's pretty much it,
 honestly. My advice is to come in with a strong brand direction and mockups
 ([mockdown.design](https://www.mockdown.design/) is great) — but these things
-are smart.
+are pretty smart on their own.
 
 ### If you're an agent
 
@@ -33,7 +33,7 @@ are smart.
 Full guide: **[docs/ADAPTERS.md](docs/ADAPTERS.md)**. References:
 `src/lib/adapters/pi/` (full-featured), `src/lib/adapters/claude-code/`.
 Then see [AGENTS.md](AGENTS.md) — notably, rewrite
-[docs/FRONTEND.md](docs/FRONTEND.md) to *your* design language.
+[docs/FRONTEND.md](docs/FRONTEND.md) to -> your <- design language, unless you want to inherit Mari's. 
 
 ## Requirements
 
