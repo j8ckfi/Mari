@@ -4,7 +4,7 @@ A native macOS desktop client for CLI coding agents, built with Tauri 2 + React.
 
 Mari is two things:
 
-1. **A frontend for [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)** —
+1. **A frontend for [Pi](https://www.pi.dev)** —
    a calm, fast chat surface over `pi --mode rpc`: streaming that feels alive,
    background agents per session, a searchable model picker. Modular, so it
    fits around your plugins and setup.
