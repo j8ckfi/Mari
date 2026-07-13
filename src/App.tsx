@@ -677,8 +677,11 @@ function trafficInset(): number {
 // top-left, right beside the traffic lights, no matter the sidebar state. Small
 // and inline with the lights (matches Claude Code / Codex). Draggable.
 function TitleBar({ onNewChat }: { onNewChat: () => void }) {
-  const { state } = useSidebar();
-  const collapsed = state === "collapsed";
+  const { state, isMobile } = useSidebar();
+  // Below the mobile breakpoint the sidebar becomes an off-canvas sheet (its own
+  // "New session" button goes off-screen) while `state` stays "expanded" — so
+  // treat mobile as collapsed to surface the new-chat button.
+  const collapsed = isMobile || state === "collapsed";
 
   return (
     <div
@@ -712,8 +715,11 @@ function TitleBar({ onNewChat }: { onNewChat: () => void }) {
 // breadcrumb (project ▸ thread). When the sidebar is closed the fixed toggle
 // cluster overlays this pane's top-left, so pad past it.
 function ContentHeader({ breadcrumb }: { breadcrumb: ReactNode }) {
-  const { state } = useSidebar();
-  const collapsed = state === "collapsed";
+  const { state, isMobile } = useSidebar();
+  // Mobile off-canvas: the content pane spans full width while `state` stays
+  // "expanded", so the toggle cluster overlays this pane's top-left. Pad past it
+  // (same as the collapsed case) instead of colliding with the traffic lights.
+  const collapsed = isMobile || state === "collapsed";
   const pl = collapsed ? trafficInset() + 66 : 20;
 
   return (
