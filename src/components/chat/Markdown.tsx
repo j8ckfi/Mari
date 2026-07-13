@@ -9,6 +9,29 @@ import { IconCopy, IconCheck } from "@tabler/icons-react";
 import "highlight.js/styles/github-dark.css";
 import { cn } from "@/lib/utils";
 import { copyText } from "@/lib/copy-text";
+import { openExternal, isExternalUrl } from "@/lib/open-external";
+
+// Links the agent emits must open in the user's real browser — a bare <a> in a
+// Tauri webview would navigate the webview and blow away the whole app. Intercept
+// the click for external URLs and route them through the opener; leave in-page
+// anchors (#…) and other schemes to default behavior.
+function Anchor({ href, children, ...rest }: ComponentProps<"a">) {
+  const external = typeof href === "string" && isExternalUrl(href);
+  return (
+    <a
+      href={href}
+      {...rest}
+      {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+      onClick={(e) => {
+        if (!external || !href) return;
+        e.preventDefault();
+        void openExternal(href);
+      }}
+    >
+      {children}
+    </a>
+  );
+}
 
 // Code block with a hover-revealed copy control. The block keeps the dark
 // (github-dark) palette in both themes, so the button uses fixed light-on-dark
@@ -61,7 +84,7 @@ export function Markdown({
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight]}
-        components={{ pre: Pre }}
+        components={{ pre: Pre, a: Anchor }}
       >
         {children}
       </ReactMarkdown>

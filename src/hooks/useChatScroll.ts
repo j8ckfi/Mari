@@ -32,7 +32,7 @@ const EDGE_THRESHOLD = 48;
 const CONTEXT_GAP = 16;
 
 export interface ChatScroll {
-  scrollRef: React.RefObject<HTMLDivElement | null>;
+  scrollRef: (node: HTMLDivElement | null) => void;
   contentRef: (node: HTMLDivElement | null) => void;
   spacerHeight: number;
   atBottom: boolean;
@@ -48,6 +48,18 @@ export function useChatScroll(
   revision: unknown,
 ): ChatScroll {
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // The scroll container is rendered only in the conversation view — it does NOT
+  // exist while the composer is on the home screen. A plain mount-effect that
+  // reads scrollRef.current sees null for a chat STARTED from home and never
+  // re-runs, so the scroll/wheel listeners never attach and auto-follow can
+  // never be disengaged ("can't scroll up while streaming"). Track the node in
+  // state via a callback ref so those effects re-run the instant it mounts —
+  // the same fix contentRef already uses.
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
+  const setScrollRef = useCallback((node: HTMLDivElement | null) => {
+    scrollRef.current = node;
+    setScrollEl(node);
+  }, []);
   const contentElRef = useRef<HTMLDivElement | null>(null);
   const contentRoRef = useRef<ResizeObserver | null>(null);
   const followingRef = useRef(true);
@@ -182,7 +194,7 @@ export function useChatScroll(
 
   // Track position; distinguish our programmatic scrolls from the reader's.
   useEffect(() => {
-    const el = scrollRef.current;
+    const el = scrollEl;
     if (!el) return;
     const onScroll = () => {
       const el2 = scrollRef.current;
@@ -206,11 +218,11 @@ export function useChatScroll(
       el.removeEventListener("scroll", onScroll);
       ro.disconnect();
     };
-  }, [bottomDelta, recomputeSpacer, updateAtBottom]);
+  }, [scrollEl, bottomDelta, recomputeSpacer, updateAtBottom]);
 
   // Upward intent from any modality disengages following.
   useEffect(() => {
-    const el = scrollRef.current;
+    const el = scrollEl;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       if (e.deltaY < 0) followingRef.current = false;
@@ -236,7 +248,7 @@ export function useChatScroll(
       el.removeEventListener("keydown", onKey);
       document.removeEventListener("selectionchange", onSelect);
     };
-  }, [bottomDelta]);
+  }, [scrollEl, bottomDelta]);
 
   const scrollToLatest = useCallback(() => {
     followingRef.current = true;
@@ -263,7 +275,7 @@ export function useChatScroll(
   }, []);
 
   return {
-    scrollRef,
+    scrollRef: setScrollRef,
     contentRef,
     spacerHeight,
     atBottom,

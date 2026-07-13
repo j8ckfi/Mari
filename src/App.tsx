@@ -8,10 +8,12 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { IconArrowDown, IconEdit } from "@tabler/icons-react";
+import { IconArrowDown, IconEdit, IconPlus, IconX } from "@tabler/icons-react";
 import { IconProvider } from "@/lib/icon-context";
 import { ProjectBreadcrumb } from "@/components/chat/ProjectBreadcrumb";
-import { InputMessage } from "@/components/ui/input-message";
+import { InputMessage, type QueuedMessage } from "@/components/ui/input-message";
+import { ChatMessage } from "@/components/ui/chat-message";
+import { Tooltip } from "@/components/ui/tooltip";
 import {
   SidebarInset,
   SidebarProvider,
@@ -520,6 +522,22 @@ function ChatSurface({
 }) {
   const [draft, setDraft] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  // Client-side send queue: submitting while the assistant streams stages the
+  // message here; it renders as ghosted bubbles at the tail of the transcript
+  // (Claude Code style) and the head auto-dispatches on the streaming→idle
+  // edge. Per-session, like draft/files.
+  const [queue, setQueue] = useState<QueuedMessage[]>([]);
+
+  // Pull a queued message back into the composer for editing (overwrites the
+  // current draft, mirroring InputMessage's own edit-queued behavior).
+  const editQueued = useCallback((item: QueuedMessage) => {
+    setDraft(item.text);
+    setFiles(item.files);
+    setQueue((q) => q.filter((m) => m.id !== item.id));
+  }, []);
+  const removeQueued = useCallback((item: QueuedMessage) => {
+    setQueue((q) => q.filter((m) => m.id !== item.id));
+  }, []);
   // session.items is a fresh array each streamed update — the revision the
   // scroll controller re-anchors on.
   const scroll = useChatScroll(session.streaming, session.items);
@@ -573,18 +591,49 @@ function ChatSurface({
       onFilesChange={setFiles}
       status={session.streaming ? "streaming" : "idle"}
       onStop={session.abort}
+      queue={queue}
+      onQueueChange={setQueue}
+      // When the agent finishes, flush the whole queue as ONE message (all at
+      // once) rather than one-per-turn. Texts join with blank lines; every
+      // queued attachment rides along.
+      onFlushQueue={(items) => {
+        const text = items
+          .map((i) => i.text.trim())
+          .filter(Boolean)
+          .join("\n\n");
+        const flushFiles = items.flatMap((i) => i.files);
+        void session.sendPrompt(text, flushFiles);
+        scroll.onUserSend();
+      }}
+      // Queued messages render as ghosted bubbles above the composer (below),
+      // not as rows inside it — enqueue + flush still run inside.
+      showQueue={false}
       placeholder={isHome ? "Do anything" : `Message ${agent.name}…`}
-      leftSlot={
-        <ComposerControls
-          capabilities={session.capabilities}
-          model={session.model}
-          availableModels={session.availableModels}
-          thinkingLevel={session.thinkingLevel}
-          stats={session.stats}
-          onSelectModel={session.setModelById}
-          onSelectThinking={session.setThinking}
-        />
-      }
+      leftSlot={({ openFilePicker }) => (
+        <>
+          {session.capabilities.attachments && (
+            <Tooltip content="Attach image or PDF" side="top">
+              <button
+                type="button"
+                onClick={() => openFilePicker()}
+                aria-label="Attach image or PDF"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-[transform,color,background-color] duration-100 hover:bg-hover hover:text-foreground active:scale-[0.96]"
+              >
+                <IconPlus size={17} />
+              </button>
+            </Tooltip>
+          )}
+          <ComposerControls
+            capabilities={session.capabilities}
+            model={session.model}
+            availableModels={session.availableModels}
+            thinkingLevel={session.thinkingLevel}
+            stats={session.stats}
+            onSelectModel={session.setModelById}
+            onSelectThinking={session.setThinking}
+          />
+        </>
+      )}
       onSend={(text, sentFiles) => {
         void session.sendPrompt(text, sentFiles);
         setDraft("");
@@ -653,16 +702,107 @@ function ChatSurface({
             </span>
           </div>
 
-          {/* Composer — docked at the bottom during a conversation. */}
-          <div className="shrink-0 px-6 pb-6 pt-2">
-            <div className="mx-auto w-full max-w-[46rem]">
+          {/* Composer — docked at the bottom during a conversation. Queued
+              messages stack as ghosted bubbles directly above it. A gradient
+              masks the seam so the transcript fades into the dock instead of
+              hard-cutting to black. */}
+          <div className="relative shrink-0 px-6 pb-6 pt-2">
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-x-0 -top-10 h-10 bg-gradient-to-b from-transparent to-background"
+            />
+            <div className="relative mx-auto w-full max-w-[46rem]">
               {disconnectedBanner}
+              <QueuedGhosts
+                queue={queue}
+                onEdit={editQueued}
+                onRemove={removeQueued}
+              />
               {composer}
             </div>
           </div>
         </>
       )}
     </>
+  );
+}
+
+// ── Queued ghosts ────────────────────────────────────────────────────────────
+// Messages staged while the assistant streams, shown as small greyed-out
+// right-aligned bubbles docked directly above the composer (Claude Code style).
+// The stack grows upward — the newest queued message sits closest to the input,
+// older ones pushed up. Hovering a bubble reveals two controls to its left:
+// edit (pencil — pull it back into the composer) and × (delete).
+function QueuedGhosts({
+  queue,
+  onEdit,
+  onRemove,
+}: {
+  queue: QueuedMessage[];
+  onEdit: (item: QueuedMessage) => void;
+  onRemove: (item: QueuedMessage) => void;
+}) {
+  if (queue.length === 0) return null;
+  return (
+    <div className="mb-2 flex flex-col gap-1.5">
+      {queue.map((item) => (
+        <QueuedGhost
+          key={item.id}
+          item={item}
+          onEdit={onEdit}
+          onRemove={onRemove}
+        />
+      ))}
+    </div>
+  );
+}
+
+function QueuedGhost({
+  item,
+  onEdit,
+  onRemove,
+}: {
+  item: QueuedMessage;
+  onEdit: (item: QueuedMessage) => void;
+  onRemove: (item: QueuedMessage) => void;
+}) {
+  const btn =
+    "flex size-6 cursor-pointer items-center justify-center rounded-md " +
+    "text-muted-foreground/70 transition-[color,background-color,transform] " +
+    "duration-100 hover:bg-hover hover:text-foreground active:scale-95";
+
+  // Same bubble as a real user message (via ChatMessage), just dimmed to read
+  // as "staged, not sent". Hover reveals edit/× to the bubble's left.
+  return (
+    <div className="group flex w-full flex-row items-center justify-end gap-1">
+      <div className="flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+        <button
+          type="button"
+          onClick={() => onEdit(item)}
+          aria-label="Edit queued message"
+          className={btn}
+        >
+          <IconEdit size={13} />
+        </button>
+        <button
+          type="button"
+          onClick={() => onRemove(item)}
+          aria-label="Remove queued message"
+          className={btn}
+        >
+          <IconX size={13} />
+        </button>
+      </div>
+      <ChatMessage
+        from="user"
+        files={item.files.length > 0 ? item.files : undefined}
+        thumbnailSize={44}
+        title="Queued — sends when the agent finishes"
+        className="opacity-55 transition-opacity duration-150 group-hover:opacity-90"
+      >
+        {item.text || undefined}
+      </ChatMessage>
+    </div>
   );
 }
 

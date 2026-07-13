@@ -2,6 +2,7 @@
 
 import {
   forwardRef,
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -132,6 +133,10 @@ interface InputMessageProps
   queue?: QueuedMessage[];
   /** Called when the queue changes (enqueue, edit, delete, reorder, dispatch). */
   onQueueChange?: (queue: QueuedMessage[]) => void;
+  /** When provided, the ENTIRE queue is flushed at once on the streaming→idle
+   *  edge (the consumer decides how to combine/send it), instead of the default
+   *  behavior of auto-dispatching the head one-at-a-time via `onSend`. */
+  onFlushQueue?: (items: QueuedMessage[]) => void;
   /** Render the built-in reorderable queue rows above the textarea. Set to
    *  `false` to suppress them and render the queue yourself (e.g. as full-width
    *  rows above the composer) — enqueue + auto-dispatch still run. */
@@ -148,20 +153,30 @@ interface InputMessageProps
 // hover-revealed remove (×) button.
 interface FilePreviewTileProps {
   file: File;
-  onRemove: () => void;
+  onRemove: (file: File) => void;
   size: number;
 }
 
-function FilePreviewTile({ file, onRemove, size }: FilePreviewTileProps) {
+// Memoized: the composer re-renders on every keystroke (controlled value), and
+// framer's `layout` re-measures on each render of the motion node — which made
+// the tile jitter forward per letter. With stable props (identity-keyed
+// onRemove, not an index closure) memo skips those renders, so the tile only
+// re-renders/animates when the file set actually changes.
+const FilePreviewTile = memo(function FilePreviewTile({
+  file,
+  onRemove,
+  size,
+}: FilePreviewTileProps) {
   const XIcon = useIcon("x");
 
   return (
     <motion.div
-      // `layout` animates sibling tiles into the gap when one is removed.
+      // NOTE: no `layout` prop. Layout projection re-measures on every ancestor
+      // commit — and the composer re-renders on every streamed token while the
+      // agent runs — which made a pasted image skitter around. Enter/exit still
+      // animate via opacity+scale; siblings just reflow instantly on removal.
       // Enter: spring-fast (0.08s) — the chip category per animation-guidelines.md.
-      // Exit: 0.06s linear — "exits should be slightly faster than enter",
-      // matches CheckboxGroup's hover-bg pattern.
-      layout
+      // Exit: 0.06s linear — "exits should be slightly faster than enter".
       initial={{ opacity: 0, scale: 0.9 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.9, transition: spring.fast.exit }}
@@ -176,7 +191,7 @@ function FilePreviewTile({ file, onRemove, size }: FilePreviewTileProps) {
           type="button"
           onClick={(e) => {
             e.stopPropagation();
-            onRemove();
+            onRemove(file);
           }}
           aria-label={`Remove ${file.name}`}
           // Force the light-mode palette (dark circle + white X) regardless
@@ -190,7 +205,7 @@ function FilePreviewTile({ file, onRemove, size }: FilePreviewTileProps) {
       </Tooltip>
     </motion.div>
   );
-}
+});
 
 // ─── Queued message row ───────────────────────────────────────────────────
 // A pending message in the queue: a recessed, draggable row that reads as
@@ -328,6 +343,7 @@ const InputMessage = forwardRef<HTMLDivElement, InputMessageProps>(
       onStop,
       queue,
       onQueueChange,
+      onFlushQueue,
       showQueue = true,
       history = [],
       className,
@@ -470,14 +486,23 @@ const InputMessage = forwardRef<HTMLDivElement, InputMessageProps>(
       prevStatusRef.current = status;
       if (!supportsQueue) return;
       if (prev === "streaming" && status === "idle" && queueArr.length > 0) {
-        const [next, ...rest] = queueArr;
-        onQueueChange?.(rest);
-        onSend?.(next.text, next.files, { queuedId: next.id });
-        setLiveMsg(
-          `Message sent.${rest.length ? ` ${rest.length} still queued.` : ""}`
-        );
+        if (onFlushQueue) {
+          // Flush the whole queue in one go — the consumer combines + sends it.
+          onQueueChange?.([]);
+          onFlushQueue(queueArr);
+          setLiveMsg(
+            `${queueArr.length} queued message${queueArr.length === 1 ? "" : "s"} sent.`
+          );
+        } else {
+          const [next, ...rest] = queueArr;
+          onQueueChange?.(rest);
+          onSend?.(next.text, next.files, { queuedId: next.id });
+          setLiveMsg(
+            `Message sent.${rest.length ? ` ${rest.length} still queued.` : ""}`
+          );
+        }
       }
-    }, [status, supportsQueue, queueArr, onQueueChange, onSend]);
+    }, [status, supportsQueue, queueArr, onQueueChange, onSend, onFlushQueue]);
 
     // ── Queue item actions ────────────────────────────────────────────
     const editQueued = useCallback(
@@ -667,10 +692,13 @@ const InputMessage = forwardRef<HTMLDivElement, InputMessageProps>(
       [onFilesChange, filesArr, matchesAccept, maxFiles]
     );
 
+    // Remove by identity, not index — a stable reference across keystrokes
+    // (filesArr only changes when files do), so the memoized preview tiles
+    // don't re-render (and jitter) while typing.
     const removeFile = useCallback(
-      (idx: number) => {
+      (file: File) => {
         if (!onFilesChange) return;
-        onFilesChange(filesArr.filter((_, i) => i !== idx));
+        onFilesChange(filesArr.filter((f) => f !== file));
       },
       [onFilesChange, filesArr]
     );
@@ -748,6 +776,21 @@ const InputMessage = forwardRef<HTMLDivElement, InputMessageProps>(
       [addFiles]
     );
 
+    // Paste-to-attach (parity with Pi): a clipboard carrying image/PDF files —
+    // e.g. a screenshot or a copied file — attaches them instead of pasting a
+    // blob URL into the text. Only preventDefault when we actually consume
+    // files, so pasting plain text still works normally.
+    const handlePaste = useCallback(
+      (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+        if (!supportsFiles || disabled) return;
+        const pasted = Array.from(e.clipboardData.files).filter(matchesAccept);
+        if (pasted.length === 0) return;
+        e.preventDefault();
+        addFiles(pasted);
+      },
+      [supportsFiles, disabled, matchesAccept, addFiles]
+    );
+
     return (
       <div
         ref={setRootRef}
@@ -789,11 +832,12 @@ const InputMessage = forwardRef<HTMLDivElement, InputMessageProps>(
           {/* Attached files preview row — sits above the textarea.
               The outer motion.div animates the row's height (collapsing the
               whole component height) when files appear / disappear.
-              The inner `mode="popLayout"` AnimatePresence pulls a removing
-              tile out of layout flow so siblings can slide into the gap
-              without fighting its exit anim. Keys are purely file-identity
-              (no index) so removing the first file doesn't re-key — and
-              remount — every surviving sibling. */}
+              The inner AnimatePresence handles per-tile enter/exit. It runs in
+              the DEFAULT mode (not popLayout): popLayout drives framer layout
+              projection, which re-measures on every ancestor commit — and the
+              composer commits on every streamed token — making a pasted image
+              jitter. Keys are purely file-identity (no index) so removing the
+              first file doesn't re-key — and remount — every surviving sibling. */}
           <AnimatePresence initial={false}>
             {filesArr.length > 0 && (
               <motion.div
@@ -805,12 +849,12 @@ const InputMessage = forwardRef<HTMLDivElement, InputMessageProps>(
                 className="overflow-hidden"
               >
                 <div className="flex flex-wrap gap-2 pb-1">
-                  <AnimatePresence initial={false} mode="popLayout">
-                    {filesArr.map((file, i) => (
+                  <AnimatePresence initial={false}>
+                    {filesArr.map((file) => (
                       <FilePreviewTile
                         key={`${file.name}-${file.size}-${file.lastModified}`}
                         file={file}
-                        onRemove={() => removeFile(i)}
+                        onRemove={removeFile}
                         size={filePreviewSize}
                       />
                     ))}
@@ -899,6 +943,7 @@ const InputMessage = forwardRef<HTMLDivElement, InputMessageProps>(
             )}
             style={{ fontVariationSettings: fontWeights.normal }}
             {...restTextareaProps}
+            onPaste={handlePaste}
           />
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 min-w-0">{leftContent}</div>
