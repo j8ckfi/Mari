@@ -19,6 +19,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # macOS draws window chrome (traffic lights) based on the SDK the binary
+      # was LINKED against, not just minos: linking pre-26 SDKs gets the legacy
+      # pre-Liquid-Glass buttons on macOS 26+, same way pre-11 minos got the
+      # pre-Big-Sur buttons. The runner's default Xcode lags local dev, so pick
+      # the newest installed Xcode and require its SDK to be >= 26.
+      - name: Select newest Xcode (need macOS 26 SDK)
+        run: |
+          XCODE="$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
+          echo "Selecting $XCODE"
+          sudo xcode-select -s "$XCODE/Contents/Developer"
+          SDK="$(xcrun --show-sdk-version)"
+          echo "SDK: $SDK"
+          if [ "${SDK%%.*}" -lt 26 ]; then
+            echo "::error::Newest Xcode on this runner ships SDK $SDK (< 26); the app would render legacy traffic lights on macOS 26+. Update the runner image or pin a newer Xcode."
+            exit 1
+          fi
+
       - uses: oven-sh/setup-bun@v2
 
       - uses: dtolnay/rust-toolchain@stable
@@ -44,3 +61,27 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: --target universal-apple-darwin
+
+      # Guard against shipping wrong window chrome again: every slice of the
+      # universal binary must target minos 11.0 (modern post-Big-Sur buttons,
+      # fixed in a571b89) and link an SDK >= 26 (Liquid Glass buttons on
+      # macOS 26+). Fails the release instead of silently regressing.
+      - name: Verify binary minos and linked SDK
+        run: |
+          BIN="$(ls src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app/Contents/MacOS/* | head -1)"
+          vtool -show-build "$BIN"
+          FAIL=0
+          for ARCH in x86_64 arm64; do
+            INFO="$(vtool -arch "$ARCH" -show-build "$BIN")"
+            MINOS="$(echo "$INFO" | awk '/minos/ {print $2}')"
+            SDK="$(echo "$INFO" | awk '/sdk/ {print $2}')"
+            if [ "$MINOS" != "11.0" ]; then
+              echo "::error::$ARCH slice has minos $MINOS (expected 11.0) — legacy traffic lights on Big Sur+."
+              FAIL=1
+            fi
+            if [ "${SDK%%.*}" -lt 26 ]; then
+              echo "::error::$ARCH slice linked against SDK $SDK (< 26) — legacy traffic lights on macOS 26+."
+              FAIL=1
+            fi
+          done
+          exit $FAIL
