@@ -16,6 +16,64 @@ async function send(page: import("@playwright/test").Page, text: string) {
   await box.press("Enter");
 }
 
+const PNG_1PX =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+
+async function pasteImage(page: import("@playwright/test").Page) {
+  await page.locator("textarea").evaluate((textarea, base64) => {
+    const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+    const transfer = new DataTransfer();
+    transfer.items.add(
+      new File([bytes], "pasted.png", {
+        type: "image/png",
+        lastModified: 1,
+      }),
+    );
+    textarea.dispatchEvent(
+      new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: transfer,
+      }),
+    );
+  }, PNG_1PX);
+  await expect(page.getByAltText("pasted.png")).toBeVisible();
+}
+
+type Box = { x: number; y: number; width: number; height: number };
+
+async function boxesDuring(
+  page: import("@playwright/test").Page,
+  action: () => Promise<void>,
+  duration: number,
+): Promise<Box[]> {
+  const samples = page.locator("[data-file-preview]").evaluate(
+    (element, ms) =>
+      new Promise<Box[]>((resolve) => {
+        const boxes: Box[] = [];
+        const start = performance.now();
+        const sample = (now: number) => {
+          const { x, y, width, height } = element.getBoundingClientRect();
+          boxes.push({ x, y, width, height });
+          if (now - start < ms) requestAnimationFrame(sample);
+          else resolve(boxes);
+        };
+        requestAnimationFrame(sample);
+      }),
+    duration,
+  );
+  await action();
+  return samples;
+}
+
+function expectStableGeometry(boxes: Box[]) {
+  expect(boxes.length).toBeGreaterThan(5);
+  for (const field of ["x", "y", "width", "height"] as const) {
+    const values = boxes.map((box) => box[field]);
+    expect(Math.max(...values) - Math.min(...values), field).toBeLessThan(0.5);
+  }
+}
+
 test("boots connected with capability-gated chrome", async ({ page }) => {
   // Mock adapter connects instantly — no disconnected banner.
   await expect(page.getByText("disconnected")).toHaveCount(0);
@@ -85,4 +143,35 @@ test("second turn appends below the first", async ({ page }) => {
   await expect(page.getByText("You said: turn two")).toBeVisible();
   // Both turns remain in the transcript.
   await expect(page.getByText("You said: turn one")).toBeVisible();
+});
+
+test("pasted image stays fixed while typing and while output streams", async ({
+  page,
+}) => {
+  const box = page.locator("textarea");
+
+  await pasteImage(page);
+  // Let the one intentional attachment entrance finish before sampling.
+  await page.waitForTimeout(350);
+  expectStableGeometry(
+    await boxesDuring(
+      page,
+      () => box.pressSequentially("steady preview", { delay: 30 }),
+      750,
+    ),
+  );
+
+  // Send a prompt, then paste a fresh image into the composer while the mock
+  // response produces reducer/UI commits. Its tile must not move as thinking,
+  // tool, and cumulative text events arrive.
+  await box.fill("stream around this preview");
+  await box.press("Enter");
+  await expect(
+    page
+      .locator('[role="status"][aria-live="polite"]')
+      .filter({ hasText: "Assistant is responding" }),
+  ).toHaveText("Assistant is responding");
+  await pasteImage(page);
+  await page.waitForTimeout(350);
+  expectStableGeometry(await boxesDuring(page, async () => {}, 900));
 });

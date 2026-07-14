@@ -171,6 +171,7 @@ const FilePreviewTile = memo(function FilePreviewTile({
 
   return (
     <motion.div
+      data-file-preview=""
       // NOTE: no `layout` prop. Layout projection re-measures on every ancestor
       // commit — and the composer re-renders on every streamed token while the
       // agent runs — which made a pasted image skitter around. Enter/exit still
@@ -203,6 +204,47 @@ const FilePreviewTile = memo(function FilePreviewTile({
           <XIcon size={12} strokeWidth={2.5} />
         </button>
       </Tooltip>
+    </motion.div>
+  );
+});
+
+// ─── File preview row ───────────────────────────────────────────────────
+interface FilePreviewRowProps {
+  files: File[];
+  onRemove: (file: File) => void;
+  size: number;
+}
+
+// Keep Framer's whole preview subtree out of unrelated composer commits. The
+// files array and identity-based remove callback stay stable while the user
+// types and while an agent streams, so memo prevents the row's `height: auto`
+// animation from being reconsidered on either hot path. It renders again only
+// when the attachment set (or requested thumbnail size) actually changes.
+const FilePreviewRow = memo(function FilePreviewRow({
+  files,
+  onRemove,
+  size,
+}: FilePreviewRowProps) {
+  return (
+    <motion.div
+      initial={{ height: 0, opacity: 0 }}
+      animate={{ height: "auto", opacity: 1 }}
+      exit={{ height: 0, opacity: 0 }}
+      transition={{ ...spring.moderate, bounce: 0 }}
+      className="overflow-hidden"
+    >
+      <div className="flex flex-wrap gap-2 pb-1">
+        <AnimatePresence initial={false}>
+          {files.map((file) => (
+            <FilePreviewTile
+              key={`${file.name}-${file.size}-${file.lastModified}`}
+              file={file}
+              onRemove={onRemove}
+              size={size}
+            />
+          ))}
+        </AnimatePresence>
+      </div>
     </motion.div>
   );
 });
@@ -829,38 +871,17 @@ const InputMessage = forwardRef<HTMLDivElement, InputMessageProps>(
             />
           )}
 
-          {/* Attached files preview row — sits above the textarea.
-              The outer motion.div animates the row's height (collapsing the
-              whole component height) when files appear / disappear.
-              The inner AnimatePresence handles per-tile enter/exit. It runs in
-              the DEFAULT mode (not popLayout): popLayout drives framer layout
-              projection, which re-measures on every ancestor commit — and the
-              composer commits on every streamed token — making a pasted image
-              jitter. Keys are purely file-identity (no index) so removing the
-              first file doesn't re-key — and remount — every surviving sibling. */}
+          {/* Attached files preview row — sits above the textarea. The memoized
+              subtree animates only when attachments change; draft and stream
+              commits never reach its Framer nodes. */}
           <AnimatePresence initial={false}>
             {filesArr.length > 0 && (
-              <motion.div
+              <FilePreviewRow
                 key="preview-row"
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: "auto", opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ ...spring.moderate, bounce: 0 }}
-                className="overflow-hidden"
-              >
-                <div className="flex flex-wrap gap-2 pb-1">
-                  <AnimatePresence initial={false}>
-                    {filesArr.map((file) => (
-                      <FilePreviewTile
-                        key={`${file.name}-${file.size}-${file.lastModified}`}
-                        file={file}
-                        onRemove={removeFile}
-                        size={filePreviewSize}
-                      />
-                    ))}
-                  </AnimatePresence>
-                </div>
-              </motion.div>
+                files={filesArr}
+                onRemove={removeFile}
+                size={filePreviewSize}
+              />
             )}
           </AnimatePresence>
 
